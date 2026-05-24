@@ -34,7 +34,7 @@ app.use(errorHandler);
 const server = app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT} (${config.nodeEnv})`);
   //comment out for now 
-  // startWhatsApp();
+  startWhatsApp();
 });
 
 process.on("SIGINT", () => {

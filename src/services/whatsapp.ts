@@ -2,8 +2,12 @@ import { Client, LocalAuth, Message } from "whatsapp-web.js";
 import qrcode from "qrcode-terminal";
 
 let client: Client | null = null;
+let isStarting = false;
 
 export async function startWhatsApp() {
+  if (isStarting || client) return;
+  isStarting = true;
+
   client = new Client({
     authStrategy: new LocalAuth({
       dataPath: "whatsapp-session",
@@ -20,12 +24,18 @@ export async function startWhatsApp() {
   });
 
   client.on("ready", () => {
+    isStarting = false;
     console.log("✅ WhatsApp connected!");
   });
 
   client.on("disconnected", (reason) => {
     console.log("WhatsApp disconnected:", reason);
     client = null;
+    isStarting = false;
+    if (reason === "LOGOUT") {
+      console.log("Logged out — delete the whatsapp-session folder and restart to re-scan QR.");
+      return;
+    }
     setTimeout(startWhatsApp, 5000);
   });
 
@@ -33,11 +43,12 @@ export async function startWhatsApp() {
   client.on("message", async (msg: Message) => {
     console.log(`[message] from=${msg.from} body="${msg.body}" fromMe=${msg.fromMe}`);
     if (msg.from.endsWith("@g.us")) return;
-    const phone = msg.from.replace("@c.us", "").replace(/\D/g, "");
+    // Preserve the full JID (may be a LID like 61242056171708@c.us) as the key
+    const jid = msg.from; // e.g. "61412345678@c.us" or "61242056171708@c.us"
     const text = msg.body;
-    if (!phone || !text) return;
+    if (!jid || !text) return;
     const { handleIncomingMessage } = await import("./conversation");
-    await handleIncomingMessage(phone, text);
+    await handleIncomingMessage(jid, text);
   });
 
   // Fire for ALL messages including sent — helps debug
@@ -50,7 +61,24 @@ export async function startWhatsApp() {
 
 export async function sendTextMessage(phone: string, text: string) {
   if (!client) throw new Error("WhatsApp not connected");
-  const jid = `${phone.replace(/\D/g, "")}@c.us`;
+
+  // phone may be a full JID (from msg.from like "61242056171708@c.us")
+  // or a plain phone number from the frontend ("61412345678")
+  let jid: string;
+  if (phone.includes("@")) {
+    // Already a JID — use directly (handles LID accounts)
+    jid = phone;
+  } else {
+    // Plain phone number from frontend — resolve via WhatsApp to get proper ID
+    const digits = phone.replace(/\D/g, "");
+    const numberId = await client.getNumberId(digits);
+    if (!numberId) {
+      console.error(`[sendTextMessage] ${digits} is not registered on WhatsApp — skipping`);
+      return;
+    }
+    jid = numberId._serialized;
+  }
+
   console.log(`[sendTextMessage] sending to ${jid}`);
   await client.sendMessage(jid, text);
   console.log(`[sendTextMessage] sent OK to ${jid}`);

@@ -3,6 +3,5 @@ node_modules
 .env
 
 /generated/prisma
-
-# WhatsApp session files (local only)
-whatsapp-session
+.wwebjs_cache/
+whatsapp-session/
