@@ -1,41 +1,104 @@
-import { Request, Response } from 'express';
-import { prisma } from '../lib/prisma';
+import { Request, Response, NextFunction } from "express";
+import * as bookingService from "../services/booking";
 
-export const bookRide = async (req: Request, res: Response) => {
+export const bookRide = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { customerId, pickupLocation, dropoffLocation, scheduledTime } = req.body;
+    const { phone, firstName, lastName, pickup, destination } = req.body;
 
-    // TODO: Validate input
-    // TODO: Create booking in database
-    // TODO: Trigger dispatch logic
+    if (!phone || !firstName || !lastName || !pickup || !destination) {
+      res.status(400).json({ success: false, error: "Missing required fields: phone, firstName, lastName, pickup, destination" });
+      return;
+    }
 
-    res.status(201).json({
-      success: true,
-      message: 'Ride booked successfully',
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to book ride',
-    });
+    const booking = await bookingService.createBooking({ phone, firstName, lastName, pickup, destination });
+
+    // Fire-and-forget dispatch — don't block the response
+    bookingService.dispatchToDrivers(booking.id).catch((err) =>
+      console.error("[bookRide] dispatch failed:", err)
+    );
+
+    res.status(201).json({ success: true, booking });
+  } catch (err) {
+    next(err);
   }
 };
 
-export const getBookings = async (req: Request, res: Response) => {
+export const getBookings = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { customerId } = req.query;
+    const status = req.query.status as string | undefined;
+    const driverId = req.query.driverId as string | undefined;
+    const bookings = await bookingService.getAllBookings({ status, driverId });
+    res.json({ success: true, bookings });
+  } catch (err) {
+    next(err);
+  }
+};
 
-    // TODO: Fetch bookings from database
-    // TODO: Apply filtering if customerId provided
+export const getBooking = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = req.params.id as string;
+    const booking = await bookingService.getBooking(id);
+    if (!booking) {
+      res.status(404).json({ success: false, error: "Booking not found" });
+      return;
+    }
+    res.json({ success: true, booking });
+  } catch (err) {
+    next(err);
+  }
+};
 
-    res.status(200).json({
-      success: true,
-      bookings: [],
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch bookings',
-    });
+export const cancelBooking = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const booking = await bookingService.cancelBooking(req.params.id as string);
+    res.json({ success: true, booking });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const assignDriver = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { driverId } = req.body;
+    if (!driverId) {
+      res.status(400).json({ success: false, error: "Missing driverId" });
+      return;
+    }
+    const booking = await bookingService.assignDriver(req.params.id as string, driverId);
+    res.json({ success: true, booking });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const acceptBooking = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { driverId } = req.body;
+    if (!driverId) {
+      res.status(400).json({ success: false, error: "Missing driverId" });
+      return;
+    }
+    const booking = await bookingService.acceptBooking(req.params.id as string, driverId);
+    res.json({ success: true, booking });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const startBooking = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const booking = await bookingService.startBooking(req.params.id as string);
+    res.json({ success: true, booking });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const completeBooking = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const booking = await bookingService.completeBooking(req.params.id as string);
+    res.json({ success: true, booking });
+  } catch (err) {
+    next(err);
   }
 };
