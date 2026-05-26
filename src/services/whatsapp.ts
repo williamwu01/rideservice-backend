@@ -1,4 +1,4 @@
-import { Client, LocalAuth, Message } from "whatsapp-web.js";
+import { Client, LocalAuth, Message, MessageMedia } from "whatsapp-web.js";
 import qrcode from "qrcode-terminal";
 
 let client: Client | null = null;
@@ -82,4 +82,26 @@ export async function sendTextMessage(phone: string, text: string) {
   console.log(`[sendTextMessage] sending to ${jid}`);
   await client.sendMessage(jid, text);
   console.log(`[sendTextMessage] sent OK to ${jid}`);
+}
+
+export async function sendImageMessage(phone: string, imagePath: string, caption: string) {
+  if (!client) throw new Error("WhatsApp not connected");
+
+  let jid: string;
+  if (phone.includes("@")) {
+    jid = phone;
+  } else {
+    const digits = phone.replace(/\D/g, "");
+    const numberId = await client.getNumberId(digits);
+    if (!numberId) {
+      console.error(`[sendImageMessage] ${digits} is not registered on WhatsApp — skipping`);
+      return;
+    }
+    jid = numberId._serialized;
+  }
+
+  const media = MessageMedia.fromFilePath(imagePath);
+  console.log(`[sendImageMessage] sending to ${jid}`);
+  await client.sendMessage(jid, media, { caption });
+  console.log(`[sendImageMessage] sent OK to ${jid}`);
 }

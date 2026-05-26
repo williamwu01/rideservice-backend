@@ -1,8 +1,10 @@
 import "dotenv/config";
+import path from "path";
 import express from "express";
 import cors from "cors";
 import whatsappRoutes from "./routes/whatsapp";
 import bookingRoutes from "./routes/bookings";
+import driverRoutes from "./routes/drivers";
 import { startWhatsApp } from "./services/whatsapp";
 import { config, validateConfig } from "./config/env";
 import { errorHandler } from "./middleware/errorHandler";
@@ -20,6 +22,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors({ origin: config.corsOrigin }));
 app.use(express.json());
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
@@ -27,6 +30,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api", bookingRoutes);
+app.use("/api", driverRoutes);
 
 // Error handler must be last
 app.use(errorHandler);

@@ -12,11 +12,6 @@ export const bookRide = async (req: Request, res: Response, next: NextFunction) 
 
     const booking = await bookingService.createBooking({ phone, firstName, lastName, pickup, destination });
 
-    // Fire-and-forget dispatch — don't block the response
-    bookingService.dispatchToDrivers(booking.id).catch((err) =>
-      console.error("[bookRide] dispatch failed:", err)
-    );
-
     res.status(201).json({ success: true, booking });
   } catch (err) {
     next(err);

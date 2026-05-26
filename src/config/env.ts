@@ -5,14 +5,15 @@ export const config = {
         url: process.env.DATABASE_URL,
     },
     jwtSecret: process.env.JWT_SECRET || 'dev-secret',
-    corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3000',  // ADD THIS LINE
+    corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    adminPhone: process.env.ADMIN_PHONE || '',
 };
 
 export const validateConfig = () => {
-    // console.log('All env vars:', Object.keys(process.env).filter(k => k.includes('DATABASE') || k.includes('PORT')));
-    // console.log('DATABASE_URL value:', process.env.DATABASE_URL);
-    
     if (!process.env.DATABASE_URL) {
         throw new Error('Missing DATABASE_URL in .env');
+    }
+    if (!process.env.ADMIN_PHONE) {
+        throw new Error('Missing ADMIN_PHONE in .env');
     }
 };
