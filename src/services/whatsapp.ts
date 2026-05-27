@@ -69,9 +69,16 @@ export async function startWhatsApp() {
     }
 
     const text = msg.body;
-    if (!text) return;
-    const { handleIncomingMessage } = await import("./conversation");
-    await handleIncomingMessage(jid, text);
+    if (!jid || !text) return;
+    const { isAdmin, handleAdminCommand } = await import("./admin/index");
+    const phone = jid.replace(/@.*/, "").replace(/\D/g, "");
+
+    if (await isAdmin(phone)) {
+      await handleAdminCommand(phone, text);
+    } else {
+      const { handleIncomingMessage } = await import("./conversation");
+      await handleIncomingMessage(jid, text);
+    }
   });
 
   // Fire for ALL messages including sent — helps debug

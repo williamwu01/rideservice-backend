@@ -19,6 +19,43 @@ model Customer {
   updatedAt       DateTime @updatedAt
 }
 
+model Admin {
+  id        String   @id @default(cuid())
+  phone     String   @unique
+  name      String
+  createdAt DateTime @default(now())
+}
+
+model PricingConfig {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  baseFare      Float
+  perKm         Float
+  perMin        Float
+  bookingFee    Float
+  minimumFare   Float
+  airportFee    Float
+  lateNightFee  Float
+  isActive      Boolean   @default(false)
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model PromoCode {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  discount    Float
+  maxUses     Int?
+  usedCount   Int       @default(0)
+  expiresAt   DateTime?
+  isActive    Boolean   @default(true)
+  createdBy   String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
 model Driver {
   id              String        @id @default(cuid())
   firstName       String
@@ -63,16 +100,27 @@ model RideRequest {
   pickup      String
   destination String
   pickupTime  String?
-  passengers        Int        @default(1)
-  luggage           Int        @default(0)
-  scheduledPickupAt DateTime?
-  proposedDriverId  String?
-  triedDriverIds    String[]   @default([])
-  status            RideStatus @default(PENDING)
-  driverId    String?
-  driver      Driver?    @relation(fields: [driverId], references: [id])
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  status      RideStatus @default(PENDING)
+  driverId      String?
+  driver        Driver?    @relation(fields: [driverId], references: [id])
+  estimatedFare Float?
+  distanceKm    Float?
+  durationMin   Int?
+  promoCode      String?
+  promoDiscount  Float?        @default(0)
+  finalFare      Float?
+  paypalOrderId  String?
+  paymentStatus  PaymentStatus @default(UNPAID)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+enum PaymentStatus {
+  UNPAID
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
 }
 
 enum ConversationStep {

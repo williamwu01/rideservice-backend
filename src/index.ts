@@ -5,6 +5,8 @@ import cors from "cors";
 import whatsappRoutes from "./routes/whatsapp";
 import bookingRoutes from "./routes/bookings";
 import driverRoutes from "./routes/drivers";
+import estimateRoutes from "./routes/estimate";
+import paymentRoutes from "./routes/payment";
 import { startWhatsApp } from "./services/whatsapp";
 import { startScheduler } from "./services/scheduler";
 import { config, validateConfig } from "./config/env";
@@ -32,6 +34,8 @@ app.get("/health", (_req, res) => {
 app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api", bookingRoutes);
 app.use("/api", driverRoutes);
+app.use("/api", estimateRoutes);
+app.use("/api", paymentRoutes);
 
 // Error handler must be last
 app.use(errorHandler);
@@ -40,6 +44,7 @@ const server = app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT} (${config.nodeEnv})`);
   startWhatsApp();
   startScheduler();
+  // startWhatsApp();
 });
 
 process.on("SIGINT", () => {
