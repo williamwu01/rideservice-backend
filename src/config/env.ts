@@ -6,17 +6,14 @@ export const config = {
     },
     jwtSecret: process.env.JWT_SECRET || 'dev-secret',
     corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3000',
-    adminPhone: process.env.ADMIN_PHONE || '',
-    blockedPhones: process.env.BLOCKED_PHONES
-        ? process.env.BLOCKED_PHONES.split(',').map(p => p.replace(/\D/g, '').trim())
-        : [],
+    tomtom: {
+    apiKey: process.env.TOMTOM_API_KEY,
+    baseUrl: process.env.TOMTOM_BASE_URL || 'https://api.tomtom.com',
+}
 };
 
 export const validateConfig = () => {
     if (!process.env.DATABASE_URL) {
         throw new Error('Missing DATABASE_URL in .env');
-    }
-    if (!process.env.ADMIN_PHONE) {
-        throw new Error('Missing ADMIN_PHONE in .env');
     }
 };
