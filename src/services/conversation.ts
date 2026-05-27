@@ -1,6 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { sendTextMessage } from "./whatsapp";
-import { cancelBooking, adminConfirmBooking, adminDeclineBooking } from "./booking";
+import { cancelBooking, adminConfirmBooking, adminDeclineBooking, acceptBooking, startBooking, completeBooking } from "./booking";
 import { config } from "../config/env";
 
 const MESSAGES = {
@@ -59,16 +59,86 @@ async function handleAdminMessage(adminPhone: string, text: string) {
   }
 }
 
+// ─── Driver routing ───────────────────────────────────────────────────────────
+
+async function findDriverByPhone(phone: string) {
+  const digits = phone.replace(/@.*/, "").replace(/\D/g, "");
+  const drivers = await prisma.driver.findMany();
+  return drivers.find((d) => d.phone.replace(/\D/g, "") === digits) ?? null;
+}
+
+async function handleDriverMessage(driverPhone: string, driverId: string, text: string) {
+  const parts = text.trim().split(/\s+/);
+  const command = parts[0]?.toUpperCase();
+  const bookingId = parts[1];
+
+  if (!bookingId) {
+    await sendTextMessage(driverPhone, "Commands:\nACCEPT {bookingId}\nSTART {bookingId}\nCOMPLETE {bookingId}");
+    return;
+  }
+
+  try {
+    if (command === "ACCEPT") {
+      await acceptBooking(bookingId, driverId);
+      await sendTextMessage(driverPhone, `Booking ${bookingId} accepted! Reply START ${bookingId} when you've picked up the customer.`);
+    } else if (command === "START") {
+      await startBooking(bookingId);
+      await sendTextMessage(driverPhone, `Ride started! Reply COMPLETE ${bookingId} when you've dropped off the customer.`);
+    } else if (command === "COMPLETE") {
+      await completeBooking(bookingId);
+      await sendTextMessage(driverPhone, `Ride completed! Great job.`);
+    } else {
+      await sendTextMessage(driverPhone, "Unknown command.\nACCEPT {bookingId}\nSTART {bookingId}\nCOMPLETE {bookingId}");
+    }
+  } catch (err: any) {
+    await sendTextMessage(driverPhone, `Error: ${err.message}`);
+  }
+}
+
 // ─── Customer conversation ────────────────────────────────────────────────────
 
-export async function startConversation(phone: string) {
+export async function startConversation(phone: string, force = false) {
   const existing = await prisma.conversationState.findUnique({ where: { phone } });
 
-  if (existing && existing.step !== "COMPLETE") {
+  if (!force && existing && existing.step !== "COMPLETE") {
     await sendTextMessage(phone, MESSAGES.ALREADY_STARTED);
     return { status: "already_active" };
   }
 
+  // Check if this customer has ridden with us before
+  const previousRide = await prisma.rideRequest.findFirst({
+    where: { phone },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (previousRide) {
+    // Returning customer — skip name, go straight to pickup
+    await prisma.conversationState.upsert({
+      where: { phone },
+      create: {
+        phone,
+        step: "AWAITING_PICKUP",
+        firstName: previousRide.firstName,
+        lastName: previousRide.lastName,
+        pickup: null,
+        destination: null,
+        pickupTime: null,
+      },
+      update: {
+        step: "AWAITING_PICKUP",
+        firstName: previousRide.firstName,
+        lastName: previousRide.lastName,
+        pickup: null,
+        destination: null,
+        pickupTime: null,
+      },
+    });
+
+    await sendTextMessage(phone, MESSAGES.ASK_PICKUP(previousRide.firstName));
+    return { status: "started" };
+  }
+
+  // New customer — start from the beginning
   await prisma.conversationState.upsert({
     where: { phone },
     create: { phone, step: "AWAITING_NAME" },
@@ -90,6 +160,13 @@ export async function handleIncomingMessage(phone: string, text: string) {
   // Route admin messages separately
   if (isAdmin(phone)) {
     await handleAdminMessage(phone, text);
+    return;
+  }
+
+  // Route driver messages separately
+  const driver = await findDriverByPhone(phone);
+  if (driver) {
+    await handleDriverMessage(phone, driver.id, text);
     return;
   }
 

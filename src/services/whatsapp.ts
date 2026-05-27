@@ -4,6 +4,17 @@ import qrcode from "qrcode-terminal";
 let client: Client | null = null;
 let isStarting = false;
 
+// Dev-mode outbox: captures messages during simulation so nothing real is sent
+const devOutbox: { to: string; body: string; sentAt: string }[] = [];
+let simulationMode = false;
+
+export function enableSimulationMode() { simulationMode = true; }
+export function disableSimulationMode() { simulationMode = false; }
+
+export function flushDevOutbox() {
+  return devOutbox.splice(0, devOutbox.length);
+}
+
 export async function startWhatsApp() {
   if (isStarting || client) return;
   isStarting = true;
@@ -43,6 +54,9 @@ export async function startWhatsApp() {
   client.on("message", async (msg: Message) => {
     console.log(`[message] from=${msg.from} body="${msg.body}" fromMe=${msg.fromMe}`);
     if (msg.from.endsWith("@g.us")) return;
+    const { config } = await import("../config/env");
+    const senderId = msg.from.replace(/@.*/, "").replace(/\D/g, "");
+    if (config.blockedPhones.includes(senderId)) return;
     // Preserve the full JID (may be a LID like 61242056171708@c.us) as the key
     const jid = msg.from; // e.g. "61412345678@c.us" or "61242056171708@c.us"
     const text = msg.body;
@@ -60,7 +74,12 @@ export async function startWhatsApp() {
 }
 
 export async function sendTextMessage(phone: string, text: string) {
-  if (!client) throw new Error("WhatsApp not connected");
+  if (!client || simulationMode) {
+    const entry = { to: phone, body: text, sentAt: new Date().toISOString() };
+    devOutbox.push(entry);
+    console.log(`[sendTextMessage][sim] to=${phone}\n${text}\n`);
+    return;
+  }
 
   // phone may be a full JID (from msg.from like "61242056171708@c.us")
   // or a plain phone number from the frontend ("61412345678")

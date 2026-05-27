@@ -7,6 +7,9 @@ export const config = {
     jwtSecret: process.env.JWT_SECRET || 'dev-secret',
     corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3000',
     adminPhone: process.env.ADMIN_PHONE || '',
+    blockedPhones: process.env.BLOCKED_PHONES
+        ? process.env.BLOCKED_PHONES.split(',').map(p => p.replace(/\D/g, '').trim())
+        : [],
 };
 
 export const validateConfig = () => {
