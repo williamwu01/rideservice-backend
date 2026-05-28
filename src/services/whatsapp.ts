@@ -52,15 +52,24 @@ export async function startWhatsApp() {
 
   // Fire for messages received
   client.on("message", async (msg: Message) => {
-    console.log(`[message] from=${msg.from} body="${msg.body}" fromMe=${msg.fromMe}`);
+    console.log(`[message] from=${msg.from} type=${msg.type} body="${msg.body}" fromMe=${msg.fromMe}`);
     if (msg.from.endsWith("@g.us")) return;
     const { config } = await import("../config/env");
     const senderId = msg.from.replace(/@.*/, "").replace(/\D/g, "");
     if (config.blockedPhones.includes(senderId)) return;
-    // Preserve the full JID (may be a LID like 61242056171708@c.us) as the key
-    const jid = msg.from; // e.g. "61412345678@c.us" or "61242056171708@c.us"
+
+    const jid = msg.from;
+    if (!jid) return;
+
+    // Handle location messages (driver sharing their GPS position)
+    if (msg.type === "location" && msg.location) {
+      const { handleLocationMessage } = await import("./conversation");
+      await handleLocationMessage(jid, msg.location.latitude, msg.location.longitude);
+      return;
+    }
+
     const text = msg.body;
-    if (!jid || !text) return;
+    if (!text) return;
     const { handleIncomingMessage } = await import("./conversation");
     await handleIncomingMessage(jid, text);
   });
@@ -104,7 +113,12 @@ export async function sendTextMessage(phone: string, text: string) {
 }
 
 export async function sendImageMessage(phone: string, imagePath: string, caption: string) {
-  if (!client) throw new Error("WhatsApp not connected");
+  if (!client || simulationMode) {
+    const entry = { to: phone, body: `[IMAGE] ${caption}`, sentAt: new Date().toISOString() };
+    devOutbox.push(entry);
+    console.log(`[sendImageMessage][sim] to=${phone}\n${caption}\n`);
+    return;
+  }
 
   let jid: string;
   if (phone.includes("@")) {

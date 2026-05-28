@@ -3,7 +3,7 @@ import * as driverService from "../services/driver";
 
 export const createDriver = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { firstName, lastName, email, phone, carModel, carNameplate, whatsappEnabled } = req.body;
+    const { firstName, lastName, email, phone, carModel, carNameplate, whatsappEnabled, isOnline, maxPassengers, maxLuggage } = req.body;
 
     if (!firstName || !lastName || !email || !phone || !carModel || !carNameplate) {
       res.status(400).json({
@@ -24,6 +24,9 @@ export const createDriver = async (req: Request, res: Response, next: NextFuncti
       carNameplate,
       photo,
       whatsappEnabled: whatsappEnabled !== undefined ? whatsappEnabled === "true" || whatsappEnabled === true : true,
+      isOnline: isOnline !== undefined ? isOnline === "true" || isOnline === true : false,
+      maxPassengers: maxPassengers !== undefined ? parseInt(maxPassengers, 10) : undefined,
+      maxLuggage: maxLuggage !== undefined ? parseInt(maxLuggage, 10) : undefined,
     });
 
     res.status(201).json({ success: true, driver });
@@ -56,7 +59,7 @@ export const getDriver = async (req: Request, res: Response, next: NextFunction)
 
 export const updateDriver = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { firstName, lastName, phone, carModel, carNameplate, whatsappEnabled } = req.body;
+    const { firstName, lastName, phone, carModel, carNameplate, whatsappEnabled, isOnline, maxPassengers, maxLuggage } = req.body;
 
     const photo = req.file ? `uploads/drivers/${req.file.filename}` : undefined;
 
@@ -70,6 +73,11 @@ export const updateDriver = async (req: Request, res: Response, next: NextFuncti
       ...(whatsappEnabled !== undefined && {
         whatsappEnabled: whatsappEnabled === "true" || whatsappEnabled === true,
       }),
+      ...(isOnline !== undefined && {
+        isOnline: isOnline === "true" || isOnline === true,
+      }),
+      ...(maxPassengers !== undefined && { maxPassengers: parseInt(maxPassengers, 10) }),
+      ...(maxLuggage !== undefined && { maxLuggage: parseInt(maxLuggage, 10) }),
     };
 
     const driver = await driverService.updateDriver(req.params.id as string, updates);
@@ -83,6 +91,34 @@ export const deleteDriver = async (req: Request, res: Response, next: NextFuncti
   try {
     await driverService.deleteDriver(req.params.id as string);
     res.json({ success: true, message: "Driver deleted" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const updateLocation = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { latitude, longitude } = req.body;
+
+    if (latitude === undefined || longitude === undefined) {
+      res.status(400).json({ success: false, error: "Missing required fields: latitude, longitude" });
+      return;
+    }
+
+    const lat = parseFloat(latitude);
+    const lon = parseFloat(longitude);
+
+    if (isNaN(lat) || isNaN(lon)) {
+      res.status(400).json({ success: false, error: "latitude and longitude must be valid numbers" });
+      return;
+    }
+
+    const driver = await driverService.updateDriver(req.params.id as string, {
+      latitude: lat,
+      longitude: lon,
+    });
+
+    res.json({ success: true, driver });
   } catch (err) {
     next(err);
   }

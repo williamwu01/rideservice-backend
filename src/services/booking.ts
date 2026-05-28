@@ -2,6 +2,8 @@ import path from "path";
 import { prisma } from "../lib/prisma";
 import { sendTextMessage, sendImageMessage } from "./whatsapp";
 import { config } from "../config/env";
+import { geocodeAddress, haversineKm } from "./geocode";
+import { parsePickupTime, formatScheduledTime } from "./timeparse";
 
 type CreateBookingInput = {
   phone: string;
@@ -10,6 +12,8 @@ type CreateBookingInput = {
   pickup: string;
   destination: string;
   pickupTime?: string;
+  passengers?: number;
+  luggage?: number;
 };
 
 type BookingFilters = {
@@ -17,9 +21,11 @@ type BookingFilters = {
   driverId?: string;
 };
 
-// ─── Create ─────────────────────────────────────────────────────────────────
+// ─── Create ──────────────────────────────────────────────────────────────────
 
 export async function createBooking(data: CreateBookingInput) {
+  const scheduledPickupAt = data.pickupTime ? parsePickupTime(data.pickupTime) : null;
+
   const booking = await prisma.rideRequest.create({
     data: {
       phone: data.phone,
@@ -28,11 +34,13 @@ export async function createBooking(data: CreateBookingInput) {
       pickup: data.pickup,
       destination: data.destination,
       pickupTime: data.pickupTime,
+      passengers: data.passengers ?? 1,
+      luggage: data.luggage ?? 0,
+      scheduledPickupAt,
       status: "AWAITING_ADMIN",
     },
   });
 
-  // Notify admin — fire and forget
   notifyAdmin(booking).catch((err) =>
     console.error("[createBooking] admin notification failed:", err)
   );
@@ -40,7 +48,7 @@ export async function createBooking(data: CreateBookingInput) {
   return booking;
 }
 
-// ─── Admin notification ──────────────────────────────────────────────────────
+// ─── Admin notification ───────────────────────────────────────────────────────
 
 async function notifyAdmin(booking: {
   id: string;
@@ -50,11 +58,18 @@ async function notifyAdmin(booking: {
   pickup: string;
   destination: string;
   pickupTime?: string | null;
+  passengers: number;
+  luggage: number;
+  scheduledPickupAt?: Date | null;
 }) {
   if (!config.adminPhone) {
     console.warn("[booking] ADMIN_PHONE not set — skipping admin notification");
     return;
   }
+
+  const timeLabel = booking.scheduledPickupAt
+    ? formatScheduledTime(booking.scheduledPickupAt)
+    : (booking.pickupTime ?? "ASAP");
 
   const message =
     `New ride request pending your approval!\n\n` +
@@ -62,35 +77,57 @@ async function notifyAdmin(booking: {
     `Phone: ${booking.phone}\n` +
     `Pickup: ${booking.pickup}\n` +
     `Destination: ${booking.destination}\n` +
-    `Pickup Time: ${booking.pickupTime ?? "ASAP"}\n\n` +
+    `Pickup Time: ${timeLabel}\n` +
+    `Passengers: ${booking.passengers}\n` +
+    `Luggage: ${booking.luggage}\n\n` +
     `Reply CONFIRM ${booking.id} to approve\n` +
     `Reply DECLINE ${booking.id} to reject`;
 
   await sendTextMessage(config.adminPhone, message);
 }
 
-// ─── Admin confirm / decline ─────────────────────────────────────────────────
+// ─── Admin confirm / decline ──────────────────────────────────────────────────
 
-export async function adminConfirmBooking(bookingId: string) {
+export async function adminConfirmBooking(bookingId: string): Promise<{ scheduled: boolean; timeLabel?: string }> {
   const booking = await prisma.rideRequest.findUnique({ where: { id: bookingId } });
   if (!booking) throw new Error(`Booking ${bookingId} not found`);
   if (booking.status !== "AWAITING_ADMIN") {
     throw new Error(`Booking is not awaiting admin approval (status: ${booking.status})`);
   }
 
-  await prisma.rideRequest.update({
-    where: { id: bookingId },
-    data: { status: "PENDING" },
-  });
+  const now = new Date();
+  const windowMs = config.scheduleDispatchWindowMinutes * 60 * 1000;
+  const isScheduledFuture =
+    booking.scheduledPickupAt !== null &&
+    booking.scheduledPickupAt.getTime() - now.getTime() > windowMs;
 
-  // Tell customer their booking was approved
-  await sendTextMessage(
-    booking.phone,
-    `Your ride request has been approved! We're finding you a driver now. Please wait...`
-  );
+  if (isScheduledFuture) {
+    await prisma.rideRequest.update({
+      where: { id: bookingId },
+      data: { status: "SCHEDULED" },
+    });
 
-  // Dispatch to all drivers
-  await dispatchToDrivers(bookingId);
+    const timeLabel = formatScheduledTime(booking.scheduledPickupAt!);
+    await sendTextMessage(
+      booking.phone,
+      `Your ride has been confirmed for ${timeLabel}!\n\nWe'll find you a driver shortly before your pickup time. You'll receive a notification when a driver is on the way.`
+    );
+
+    return { scheduled: true, timeLabel };
+  } else {
+    await prisma.rideRequest.update({
+      where: { id: bookingId },
+      data: { status: "PENDING" },
+    });
+
+    await sendTextMessage(
+      booking.phone,
+      `Your ride request has been approved! Finding you the best available driver...`
+    );
+
+    await selectAndProposeDriver(bookingId);
+    return { scheduled: false };
+  }
 }
 
 export async function adminDeclineBooking(bookingId: string) {
@@ -111,108 +148,177 @@ export async function adminDeclineBooking(bookingId: string) {
   );
 }
 
-// ─── Dispatch to drivers ─────────────────────────────────────────────────────
+// ─── Select and propose a single driver to the customer ───────────────────────
 
-export async function dispatchToDrivers(bookingId: string) {
+export async function selectAndProposeDriver(bookingId: string): Promise<boolean> {
   const booking = await prisma.rideRequest.findUnique({ where: { id: bookingId } });
   if (!booking) throw new Error(`Booking ${bookingId} not found`);
-  if (booking.status !== "PENDING") throw new Error(`Booking ${bookingId} is not PENDING`);
 
-  const drivers = await prisma.driver.findMany({ where: { whatsappEnabled: true } });
-  if (drivers.length === 0) return { dispatched: 0 };
+  // Find online drivers with capacity, excluding already tried ones
+  const candidates = await prisma.driver.findMany({
+    where: {
+      whatsappEnabled: true,
+      isOnline: true,
+      maxPassengers: { gte: booking.passengers },
+      maxLuggage: { gte: booking.luggage },
+      id: { notIn: booking.triedDriverIds.length > 0 ? booking.triedDriverIds : [""] },
+    },
+  });
 
-  const message =
-    `New ride request!\n\n` +
+  if (candidates.length === 0) {
+    await sendTextMessage(
+      booking.phone,
+      `Sorry, no drivers are available right now. Our team has been notified and will follow up with you shortly.`
+    );
+
+    if (config.adminPhone) {
+      await sendTextMessage(
+        config.adminPhone,
+        `No available drivers for booking ${bookingId} (${booking.firstName} ${booking.lastName}). All drivers tried or none online.`
+      );
+    }
+
+    await prisma.rideRequest.update({
+      where: { id: bookingId },
+      data: { status: "CANCELLED" },
+    });
+
+    return false;
+  }
+
+  // Sort by proximity to pickup
+  const pickupCoords = await geocodeAddress(booking.pickup);
+  let ranked = candidates;
+
+  if (pickupCoords) {
+    const withLocation = candidates
+      .filter((d) => d.latitude !== null && d.longitude !== null)
+      .map((d) => ({
+        driver: d,
+        distanceKm: haversineKm(d.latitude!, d.longitude!, pickupCoords.lat, pickupCoords.lon),
+      }))
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .map((d) => d.driver);
+
+    const withoutLocation = candidates.filter(
+      (d) => d.latitude === null || d.longitude === null
+    );
+
+    ranked = [...withLocation, ...withoutLocation];
+  }
+
+  const selected = ranked[0];
+
+  // Store proposed driver on booking
+  await prisma.rideRequest.update({
+    where: { id: bookingId },
+    data: { proposedDriverId: selected.id },
+  });
+
+  // Show driver to customer
+  await proposeDriverToCustomer(booking, selected);
+
+  console.log(`[propose] driver ${selected.firstName} ${selected.lastName} proposed for booking ${bookingId}`);
+  return true;
+}
+
+// ─── Customer confirms proposed driver ────────────────────────────────────────
+
+export async function confirmProposedDriver(bookingId: string) {
+  const booking = await prisma.rideRequest.findUnique({ where: { id: bookingId } });
+  if (!booking) throw new Error(`Booking ${bookingId} not found`);
+  if (!booking.proposedDriverId) throw new Error(`No proposed driver for booking ${bookingId}`);
+
+  const driver = await prisma.driver.findUnique({ where: { id: booking.proposedDriverId } });
+  if (!driver) throw new Error(`Proposed driver not found`);
+
+  // Match the booking
+  await prisma.rideRequest.update({
+    where: { id: bookingId },
+    data: {
+      status: "MATCHED",
+      driverId: booking.proposedDriverId,
+      proposedDriverId: null,
+    },
+  });
+
+  // Notify driver with full job details
+  const customerDigits = booking.phone.replace(/@.*/, "").replace(/\D/g, "");
+  const customerLink = `https://wa.me/${customerDigits}`;
+
+  const timeLabel = booking.scheduledPickupAt
+    ? formatScheduledTime(booking.scheduledPickupAt)
+    : (booking.pickupTime ?? "ASAP");
+
+  await sendTextMessage(
+    driver.phone,
+    `You have been assigned a ride!\n\n` +
     `Customer: ${booking.firstName} ${booking.lastName}\n` +
     `Pickup: ${booking.pickup}\n` +
     `Destination: ${booking.destination}\n` +
-    `Pickup Time: ${booking.pickupTime ?? "ASAP"}\n\n` +
-    `Reply "ACCEPT ${bookingId}" to take this ride.`;
-
-  const results = await Promise.allSettled(
-    drivers.map((driver) => sendTextMessage(driver.phone, message))
+    `Pickup Time: ${timeLabel}\n` +
+    `Passengers: ${booking.passengers}\n` +
+    `Luggage: ${booking.luggage}\n` +
+    `Contact: ${customerLink}\n\n` +
+    `Reply START ${bookingId} when you've picked up the customer.`
   );
-
-  const dispatched = results.filter((r) => r.status === "fulfilled").length;
-  const failed = results.filter((r) => r.status === "rejected").length;
-
-  if (failed > 0) {
-    console.error(`[dispatch] ${failed}/${drivers.length} WhatsApp sends failed for booking ${bookingId}`);
-  }
-
-  return { dispatched, total: drivers.length };
 }
 
-// ─── Driver accept ───────────────────────────────────────────────────────────
+// ─── Customer declines proposed driver — try next ─────────────────────────────
 
-export async function acceptBooking(bookingId: string, driverId: string) {
-  const result = await prisma.$transaction(async (tx) => {
-    const booking = await tx.rideRequest.findUnique({ where: { id: bookingId } });
-
-    if (!booking) throw new Error(`Booking ${bookingId} not found`);
-    if (booking.status !== "PENDING") {
-      throw new Error(`Booking ${bookingId} is no longer available (status: ${booking.status})`);
-    }
-
-    const driver = await tx.driver.findUnique({ where: { id: driverId } });
-    if (!driver) throw new Error(`Driver ${driverId} not found`);
-
-    const activeRide = await tx.rideRequest.findFirst({
-      where: { driverId, status: { in: ["MATCHED", "IN_PROGRESS"] } },
-    });
-    if (activeRide) throw new Error(`Driver ${driverId} already has an active booking`);
-
-    return tx.rideRequest.update({
-      where: { id: bookingId },
-      data: { status: "MATCHED", driverId },
-      include: { driver: true },
-    });
-  });
-
-  notifyCustomerOfDriver(result, result.driver!).catch((err) =>
-    console.error("[acceptBooking] customer notification failed:", err)
-  );
-
-  return result;
-}
-
-// ─── Admin manually assigns driver ───────────────────────────────────────────
-
-export async function assignDriver(bookingId: string, driverId: string) {
+export async function declineProposedDriver(bookingId: string) {
   const booking = await prisma.rideRequest.findUnique({ where: { id: bookingId } });
   if (!booking) throw new Error(`Booking ${bookingId} not found`);
-  if (booking.status === "COMPLETED" || booking.status === "CANCELLED") {
-    throw new Error(`Cannot assign driver to a ${booking.status} booking`);
-  }
 
-  const driver = await prisma.driver.findUnique({ where: { id: driverId } });
-  if (!driver) throw new Error(`Driver ${driverId} not found`);
+  // Add current proposed driver to the tried list
+  const newTriedIds = [
+    ...booking.triedDriverIds,
+    ...(booking.proposedDriverId ? [booking.proposedDriverId] : []),
+  ];
 
-  const updated = await prisma.rideRequest.update({
+  await prisma.rideRequest.update({
     where: { id: bookingId },
-    data: { status: "MATCHED", driverId },
-    include: { driver: true },
+    data: {
+      proposedDriverId: null,
+      triedDriverIds: newTriedIds,
+    },
   });
 
-  notifyCustomerOfDriver(updated, updated.driver!).catch((err) =>
-    console.error("[assignDriver] customer notification failed:", err)
-  );
+  // Try to propose the next best driver
+  const found = await selectAndProposeDriver(bookingId);
 
-  return updated;
+  if (!found) {
+    // No more drivers — close the conversation
+    await prisma.conversationState.updateMany({
+      where: { pendingBookingId: bookingId },
+      data: { step: "COMPLETE", pendingBookingId: null },
+    });
+  }
 }
 
-// ─── Send driver card to customer ────────────────────────────────────────────
+// ─── Send driver proposal to customer ────────────────────────────────────────
 
-async function notifyCustomerOfDriver(
+async function proposeDriverToCustomer(
   booking: { id: string; phone: string },
-  driver: { firstName: string; lastName: string; carModel: string; carNameplate: string; photo: string | null }
+  driver: {
+    firstName: string;
+    lastName: string;
+    phone: string;
+    carModel: string;
+    carNameplate: string;
+    photo: string | null;
+  }
 ) {
+  const driverDigits = driver.phone.replace(/\D/g, "");
+  const whatsappLink = `https://wa.me/${driverDigits}`;
+
   const caption =
-    `Your driver has been assigned!\n\n` +
+    `We found a driver for you!\n\n` +
     `Driver: ${driver.firstName} ${driver.lastName}\n` +
     `Car: ${driver.carModel}\n` +
-    `Plate: ${driver.carNameplate}\n\n` +
-    `Reply YES to confirm or NO to cancel.`;
+    `Plate: ${driver.carNameplate}\n` +
+    `Contact: ${whatsappLink}\n\n` +
+    `Reply YES to confirm or NO for a different driver.`;
 
   if (driver.photo) {
     const imagePath = path.join(process.cwd(), driver.photo);
@@ -235,7 +341,48 @@ async function notifyCustomerOfDriver(
   });
 }
 
-// ─── Status transitions ──────────────────────────────────────────────────────
+// ─── Admin manually assigns driver (bypasses customer confirmation) ───────────
+
+export async function assignDriver(bookingId: string, driverId: string) {
+  const booking = await prisma.rideRequest.findUnique({ where: { id: bookingId } });
+  if (!booking) throw new Error(`Booking ${bookingId} not found`);
+  if (booking.status === "COMPLETED" || booking.status === "CANCELLED") {
+    throw new Error(`Cannot assign driver to a ${booking.status} booking`);
+  }
+
+  const driver = await prisma.driver.findUnique({ where: { id: driverId } });
+  if (!driver) throw new Error(`Driver ${driverId} not found`);
+
+  const updated = await prisma.rideRequest.update({
+    where: { id: bookingId },
+    data: { status: "MATCHED", driverId, proposedDriverId: null },
+    include: { driver: true },
+  });
+
+  // Notify driver directly
+  const customerDigits = booking.phone.replace(/@.*/, "").replace(/\D/g, "");
+  const customerLink = `https://wa.me/${customerDigits}`;
+  const timeLabel = booking.scheduledPickupAt
+    ? formatScheduledTime(booking.scheduledPickupAt)
+    : (booking.pickupTime ?? "ASAP");
+
+  await sendTextMessage(
+    driver.phone,
+    `You have been assigned a ride!\n\n` +
+    `Customer: ${booking.firstName} ${booking.lastName}\n` +
+    `Pickup: ${booking.pickup}\n` +
+    `Destination: ${booking.destination}\n` +
+    `Pickup Time: ${timeLabel}\n` +
+    `Passengers: ${booking.passengers}\n` +
+    `Luggage: ${booking.luggage}\n` +
+    `Contact: ${customerLink}\n\n` +
+    `Reply START ${bookingId} when you've picked up the customer.`
+  ).catch((err) => console.error("[assignDriver] driver notification failed:", err));
+
+  return updated;
+}
+
+// ─── Status transitions ───────────────────────────────────────────────────────
 
 export async function cancelBooking(id: string) {
   const booking = await prisma.rideRequest.findUnique({ where: { id } });

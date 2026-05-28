@@ -6,6 +6,7 @@ import whatsappRoutes from "./routes/whatsapp";
 import bookingRoutes from "./routes/bookings";
 import driverRoutes from "./routes/drivers";
 import { startWhatsApp } from "./services/whatsapp";
+import { startScheduler } from "./services/scheduler";
 import { config, validateConfig } from "./config/env";
 import { errorHandler } from "./middleware/errorHandler";
 
@@ -37,8 +38,8 @@ app.use(errorHandler);
 
 const server = app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT} (${config.nodeEnv})`);
-  //comment out for now 
   startWhatsApp();
+  startScheduler();
 });
 
 process.on("SIGINT", () => {

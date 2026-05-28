@@ -4,6 +4,7 @@ import path from "path";
 import crypto from "crypto";
 import fs from "fs";
 import * as driverController from "../controllers/driverController";
+import { requireApiKey } from "../middleware/apiKey";
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -30,10 +31,11 @@ const upload = multer({
 
 const router = express.Router();
 
-router.post("/drivers", upload.single("photo"), driverController.createDriver);
-router.get("/drivers", driverController.getDrivers);
-router.get("/drivers/:id", driverController.getDriver);
-router.put("/drivers/:id", upload.single("photo"), driverController.updateDriver);
-router.delete("/drivers/:id", driverController.deleteDriver);
+router.post("/drivers", requireApiKey, upload.single("photo"), driverController.createDriver);
+router.get("/drivers", requireApiKey, driverController.getDrivers);
+router.get("/drivers/:id", requireApiKey, driverController.getDriver);
+router.put("/drivers/:id", requireApiKey, upload.single("photo"), driverController.updateDriver);
+router.patch("/drivers/:id/location", requireApiKey, driverController.updateLocation);
+router.delete("/drivers/:id", requireApiKey, driverController.deleteDriver);
 
 export default router;

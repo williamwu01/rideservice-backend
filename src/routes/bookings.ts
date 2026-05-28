@@ -1,20 +1,21 @@
 import express from "express";
 import * as bookingController from "../controllers/bookingController";
+import { requireApiKey } from "../middleware/apiKey";
 
 const router = express.Router();
 
-// Customer
+// Customer — open (triggered from the frontend booking widget)
 router.post("/book-ride", bookingController.bookRide);
 
-// Admin / listing
-router.get("/bookings", bookingController.getBookings);
-router.get("/bookings/:id", bookingController.getBooking);
-router.put("/bookings/:id/cancel", bookingController.cancelBooking);
-router.put("/bookings/:id/assign-driver", bookingController.assignDriver);
+// Admin only
+router.get("/bookings", requireApiKey, bookingController.getBookings);
+router.get("/bookings/:id", requireApiKey, bookingController.getBooking);
+router.put("/bookings/:id/cancel", requireApiKey, bookingController.cancelBooking);
+router.put("/bookings/:id/assign-driver", requireApiKey, bookingController.assignDriver);
 
-// Driver actions
-router.post("/bookings/:id/accept", bookingController.acceptBooking);
-router.put("/bookings/:id/start", bookingController.startBooking);
-router.put("/bookings/:id/complete", bookingController.completeBooking);
+// Driver actions — admin dashboard use only (real drivers use WhatsApp)
+router.post("/bookings/:id/accept", requireApiKey, bookingController.acceptBooking);
+router.put("/bookings/:id/start", requireApiKey, bookingController.startBooking);
+router.put("/bookings/:id/complete", requireApiKey, bookingController.completeBooking);
 
 export default router;

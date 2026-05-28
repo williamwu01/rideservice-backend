@@ -9,6 +9,11 @@ type CreateDriverInput = {
   carNameplate: string;
   photo?: string;
   whatsappEnabled?: boolean;
+  isOnline?: boolean;
+  maxPassengers?: number;
+  maxLuggage?: number;
+  latitude?: number;
+  longitude?: number;
 };
 
 type UpdateDriverInput = Partial<Omit<CreateDriverInput, "email">>;

@@ -29,6 +29,11 @@ model Driver {
   carNameplate    String
   photo           String?
   whatsappEnabled Boolean       @default(true)
+  isOnline        Boolean       @default(false)
+  maxPassengers   Int           @default(4)
+  maxLuggage      Int           @default(2)
+  latitude        Float?
+  longitude       Float?
   rideRequests    RideRequest[]
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
@@ -43,6 +48,8 @@ model ConversationState {
   pickup           String?
   destination      String?
   pickupTime       String?
+  passengers       Int?
+  luggage          Int?
   pendingBookingId String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
@@ -56,7 +63,12 @@ model RideRequest {
   pickup      String
   destination String
   pickupTime  String?
-  status      RideStatus @default(PENDING)
+  passengers        Int        @default(1)
+  luggage           Int        @default(0)
+  scheduledPickupAt DateTime?
+  proposedDriverId  String?
+  triedDriverIds    String[]   @default([])
+  status            RideStatus @default(PENDING)
   driverId    String?
   driver      Driver?    @relation(fields: [driverId], references: [id])
   createdAt   DateTime   @default(now())
@@ -68,12 +80,15 @@ enum ConversationStep {
   AWAITING_PICKUP
   AWAITING_DESTINATION
   AWAITING_PICKUP_TIME
+  AWAITING_PASSENGERS
+  AWAITING_LUGGAGE
   AWAITING_DRIVER_CONFIRMATION
   COMPLETE
 }
 
 enum RideStatus {
   AWAITING_ADMIN
+  SCHEDULED
   PENDING
   MATCHED
   IN_PROGRESS

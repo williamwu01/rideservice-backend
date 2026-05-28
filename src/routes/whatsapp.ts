@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { startConversation, handleIncomingMessage } from "../services/conversation";
 import { flushDevOutbox, enableSimulationMode, disableSimulationMode } from "../services/whatsapp";
+import { requireApiKey } from "../middleware/apiKey";
 import { prisma } from "../lib/prisma";
 
 const router = Router();
@@ -41,8 +42,12 @@ router.post("/start", async (req: Request, res: Response) => {
 
 // POST /api/whatsapp/simulate
 // Dev-only: simulate an incoming WhatsApp message from any phone number.
-// Returns the bot's reply(ies) and the updated conversation state.
-router.post("/simulate", async (req: Request, res: Response) => {
+// Requires API key and is blocked entirely in production.
+router.post("/simulate", requireApiKey, async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === "production") {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
   const { phone, message } = req.body;
 
   if (!phone || !message) {
