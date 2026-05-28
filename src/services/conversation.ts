@@ -1,7 +1,7 @@
+import * as chrono from "chrono-node";
 import { prisma } from "../lib/prisma";
 import { sendTextMessage } from "./whatsapp";
 import { cancelBooking, adminConfirmBooking, adminDeclineBooking, acceptBooking, startBooking, completeBooking } from "./booking";
-import { config } from "../config/env";
 
 const MESSAGES = {
   GREETING:
@@ -31,11 +31,10 @@ const MESSAGES = {
 
 // ─── Admin routing ────────────────────────────────────────────────────────────
 
-function isAdmin(phone: string): boolean {
-  if (!config.adminPhone) return false;
-  const adminDigits = config.adminPhone.replace(/\D/g, "");
-  const senderDigits = phone.replace(/@.*/, "").replace(/\D/g, "");
-  return senderDigits === adminDigits;
+async function isAdmin(phone: string): Promise<boolean> {
+  const digits = phone.replace(/@.*/, "").replace(/\D/g, "");
+  const admin = await prisma.admin.findUnique({ where: { phone: digits } });
+  return !!admin;
 }
 
 async function handleAdminMessage(adminPhone: string, text: string) {
@@ -158,7 +157,7 @@ export async function startConversation(phone: string, force = false) {
 
 export async function handleIncomingMessage(phone: string, text: string) {
   // Route admin messages separately
-  if (isAdmin(phone)) {
+  if (await isAdmin(phone)) {
     await handleAdminMessage(phone, text);
     return;
   }
@@ -215,9 +214,40 @@ export async function handleIncomingMessage(phone: string, text: string) {
     }
 
     case "AWAITING_PICKUP_TIME": {
+      // Handle ASAP as a special case
+      let pickupTime: Date;
+      if (trimmed.toLowerCase() === "asap") {
+        pickupTime = new Date();
+      } else {
+        const parsed = chrono.parseDate(trimmed, new Date(), { timezones: { "PDT": -420, "PST": -480 } });
+        if (!parsed) {
+          await sendTextMessage(
+            phone,
+            `Sorry, I couldn't understand that time. Please try one of these formats:\n\n` +
+            `• ASAP\n` +
+            `• Today 3pm\n` +
+            `• Tomorrow 9:00 AM\n` +
+            `• May 29 at 2:00 PM\n` +
+            `• 10/30/2025 3pm`
+          );
+          return;
+        }
+        if (parsed < new Date()) {
+          await sendTextMessage(phone, "That time has already passed. Please enter a future pickup time.");
+          return;
+        }
+        pickupTime = parsed;
+      }
+
+      const formattedTime = pickupTime.toLocaleString("en-CA", {
+        timeZone: "America/Vancouver",
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+
       const updated = await prisma.conversationState.update({
         where: { phone },
-        data: { pickupTime: trimmed, step: "COMPLETE" },
+        data: { pickupTime: formattedTime, step: "COMPLETE" },
       });
 
       const booking = await prisma.rideRequest.create({
@@ -232,20 +262,21 @@ export async function handleIncomingMessage(phone: string, text: string) {
         },
       });
 
-      // Notify admin
-      if (config.adminPhone) {
-        const adminMsg =
-          `New ride request pending your approval!\n\n` +
-          `Customer: ${updated.firstName} ${updated.lastName}\n` +
-          `Phone: ${phone}\n` +
-          `Pickup: ${updated.pickup}\n` +
-          `Destination: ${updated.destination}\n` +
-          `Pickup Time: ${trimmed}\n\n` +
-          `Reply CONFIRM ${booking.id} to approve\n` +
-          `Reply DECLINE ${booking.id} to reject`;
+      // Notify all admins from DB
+      const admins = await prisma.admin.findMany();
+      const adminMsg =
+        `New ride request pending your approval!\n\n` +
+        `Customer: ${updated.firstName} ${updated.lastName}\n` +
+        `Phone: ${phone}\n` +
+        `Pickup: ${updated.pickup}\n` +
+        `Destination: ${updated.destination}\n` +
+        `Pickup Time: ${formattedTime}\n\n` +
+        `Reply CONFIRM ${booking.id} to approve\n` +
+        `Reply DECLINE ${booking.id} to reject`;
 
-        sendTextMessage(config.adminPhone, adminMsg).catch((err) =>
-          console.error("[conversation] admin notification failed:", err)
+      for (const admin of admins) {
+        sendTextMessage(admin.phone, adminMsg).catch((err) =>
+          console.error(`[conversation] admin notification failed for ${admin.phone}:`, err)
         );
       }
 
