@@ -1,7 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { sendTextMessage } from "./whatsapp";
-import { cancelBooking, adminConfirmBooking, adminDeclineBooking, confirmProposedDriver, declineProposedDriver, startBooking, completeBooking } from "./booking";
-import { config } from "../config/env";
+import { confirmProposedDriver, declineProposedDriver, startBooking, completeBooking } from "./booking";
 import { parsePickupTime, formatScheduledTime } from "./timeparse";
 
 const MESSAGES = {
@@ -35,49 +34,21 @@ const MESSAGES = {
   DRIVER_DECLINED:
     "No problem! We'll look for another driver for you. Please wait a moment.",
   DRIVER_INVALID:
-    "Please reply YES to confirm your driver or NO to cancel.",
+    "Please reply YES to confirm your driver or NO for a different one.",
 };
 
-// ─── Admin routing ────────────────────────────────────────────────────────────
-
-function isAdmin(phone: string): boolean {
-  if (!config.adminPhone) return false;
-  const adminDigits = config.adminPhone.replace(/\D/g, "");
-  const senderDigits = phone.replace(/@.*/, "").replace(/\D/g, "");
-  return senderDigits === adminDigits;
-}
-
-async function handleAdminMessage(adminPhone: string, text: string) {
-  const parts = text.trim().split(/\s+/);
-  const command = parts[0]?.toUpperCase();
-  const bookingId = parts[1];
-
-  if (!bookingId) {
-    await sendTextMessage(adminPhone, "Usage:\nCONFIRM {bookingId}\nDECLINE {bookingId}");
-    return;
-  }
-
-  if (command === "CONFIRM") {
-    const result = await adminConfirmBooking(bookingId);
-    const adminReply = result.scheduled
-      ? `Booking ${bookingId} confirmed. Ride is scheduled for ${result.timeLabel} — a driver will be proposed to the customer closer to pickup time.`
-      : `Booking ${bookingId} confirmed. Best available driver proposed to customer — waiting for their confirmation.`;
-    await sendTextMessage(adminPhone, adminReply);
-  } else if (command === "DECLINE") {
-    await adminDeclineBooking(bookingId);
-    await sendTextMessage(adminPhone, `Booking ${bookingId} has been declined.`);
-  } else {
-    await sendTextMessage(adminPhone, "Unknown command.\nCONFIRM {bookingId}\nDECLINE {bookingId}");
-  }
-}
-
-// ─── Driver routing ───────────────────────────────────────────────────────────
+// ─── Driver lookup ────────────────────────────────────────────────────────────
 
 async function findDriverByPhone(phone: string) {
   const digits = phone.replace(/@.*/, "").replace(/\D/g, "");
-  const drivers = await prisma.driver.findMany();
-  return drivers.find((d) => d.phone.replace(/\D/g, "") === digits) ?? null;
+  // Select only id + phone to avoid loading unnecessary fields for every message
+  const all = await prisma.driver.findMany({ select: { id: true, phone: true } });
+  const match = all.find((d) => d.phone.replace(/\D/g, "") === digits);
+  if (!match) return null;
+  return prisma.driver.findUnique({ where: { id: match.id } });
 }
+
+// ─── Driver commands ──────────────────────────────────────────────────────────
 
 async function handleDriverMessage(driverPhone: string, driverId: string, text: string) {
   const parts = text.trim().split(/\s+/);
@@ -102,7 +73,7 @@ async function handleDriverMessage(driverPhone: string, driverId: string, text: 
   if (!bookingId) {
     await sendTextMessage(
       driverPhone,
-      `Commands:\nONLINE — go online\nOFFLINE — go offline\nSTART {bookingId} — picked up customer\nCOMPLETE {bookingId} — dropped off customer`
+      `Commands:\nONLINE — go online\nOFFLINE — go offline\nSTART <bookingId> — picked up customer\nCOMPLETE <bookingId> — dropped off customer`
     );
     return;
   }
@@ -117,15 +88,16 @@ async function handleDriverMessage(driverPhone: string, driverId: string, text: 
     } else {
       await sendTextMessage(
         driverPhone,
-        `Unknown command.\nONLINE — go online\nOFFLINE — go offline\nSTART {bookingId}\nCOMPLETE {bookingId}`
+        `Unknown command.\nONLINE | OFFLINE | START <bookingId> | COMPLETE <bookingId>`
       );
     }
-  } catch (err: any) {
-    await sendTextMessage(driverPhone, `Error: ${err.message}`);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    await sendTextMessage(driverPhone, `Error: ${msg}`);
   }
 }
 
-// ─── Customer conversation ────────────────────────────────────────────────────
+// ─── Customer conversation start ──────────────────────────────────────────────
 
 export async function startConversation(phone: string, force = false) {
   const existing = await prisma.conversationState.findUnique({ where: { phone } });
@@ -135,14 +107,12 @@ export async function startConversation(phone: string, force = false) {
     return { status: "already_active" };
   }
 
-  // Check if this customer has ridden with us before
   const previousRide = await prisma.rideRequest.findFirst({
     where: { phone },
     orderBy: { createdAt: "desc" },
   });
 
   if (previousRide) {
-    // Returning customer — skip name, go straight to pickup
     await prisma.conversationState.upsert({
       where: { phone },
       create: {
@@ -167,12 +137,10 @@ export async function startConversation(phone: string, force = false) {
         luggage: null,
       },
     });
-
     await sendTextMessage(phone, MESSAGES.ASK_PICKUP(previousRide.firstName));
     return { status: "started" };
   }
 
-  // New customer — start from the beginning
   await prisma.conversationState.upsert({
     where: { phone },
     create: { phone, step: "AWAITING_NAME" },
@@ -187,20 +155,17 @@ export async function startConversation(phone: string, force = false) {
       luggage: null,
     },
   });
-
   await sendTextMessage(phone, MESSAGES.GREETING);
   return { status: "started" };
 }
 
-// ─── Driver location update (WhatsApp location message) ──────────────────────
+// ─── Driver GPS location ──────────────────────────────────────────────────────
 
 export async function handleLocationMessage(phone: string, latitude: number, longitude: number) {
   const driver = await findDriverByPhone(phone);
+  if (!driver) return; // non-driver sharing location — ignore silently
 
-  if (!driver) {
-    // Non-drivers sharing location — ignore silently
-    return;
-  }
+  const firstUpdate = driver.latitude === null;
 
   await prisma.driver.update({
     where: { id: driver.id },
@@ -209,134 +174,127 @@ export async function handleLocationMessage(phone: string, latitude: number, lon
 
   console.log(`[location] driver ${driver.firstName} ${driver.lastName} → (${latitude.toFixed(5)}, ${longitude.toFixed(5)})`);
 
-  // Only confirm the first update so we don't spam the driver on every live location ping
-  if (driver.latitude === null) {
-    await sendTextMessage(
-      phone,
-      `Location received! We'll use this to assign you the closest rides.`
-    );
+  if (firstUpdate) {
+    await sendTextMessage(phone, `Location received! We'll use this to assign you the closest rides.`);
   }
 }
 
+// ─── Main incoming message router ────────────────────────────────────────────
+// Note: admin messages are already routed by whatsapp.ts before reaching here.
+
 export async function handleIncomingMessage(phone: string, text: string) {
-  // Route admin messages separately
-  if (isAdmin(phone)) {
-    await handleAdminMessage(phone, text);
-    return;
-  }
-
-  // Route driver messages separately
-  const driver = await findDriverByPhone(phone);
-  if (driver) {
-    await handleDriverMessage(phone, driver.id, text);
-    return;
-  }
-
-  const state = await prisma.conversationState.findUnique({ where: { phone } });
-
-  if (!state || state.step === "COMPLETE") {
-    await startConversation(phone);
-    return;
-  }
-
-  const trimmed = text.trim();
-
-  switch (state.step) {
-    case "AWAITING_NAME": {
-      const parts = trimmed.split(" ");
-      const firstName = parts[0];
-      const lastName = parts.slice(1).join(" ") || "";
-
-      await prisma.conversationState.update({
-        where: { phone },
-        data: { firstName, lastName, step: "AWAITING_PICKUP" },
-      });
-
-      await sendTextMessage(phone, MESSAGES.ASK_PICKUP(firstName));
-      break;
+  try {
+    // Check if sender is a driver
+    const driver = await findDriverByPhone(phone);
+    if (driver) {
+      await handleDriverMessage(phone, driver.id, text);
+      return;
     }
 
-    case "AWAITING_PICKUP": {
-      await prisma.conversationState.update({
-        where: { phone },
-        data: { pickup: trimmed, step: "AWAITING_DESTINATION" },
-      });
+    const state = await prisma.conversationState.findUnique({ where: { phone } });
 
-      await sendTextMessage(phone, MESSAGES.ASK_DESTINATION);
-      break;
+    if (!state || state.step === "COMPLETE") {
+      await startConversation(phone);
+      return;
     }
 
-    case "AWAITING_DESTINATION": {
-      await prisma.conversationState.update({
-        where: { phone },
-        data: { destination: trimmed, step: "AWAITING_PICKUP_TIME" },
-      });
+    const trimmed = text.trim();
 
-      await sendTextMessage(phone, MESSAGES.ASK_PICKUP_TIME);
-      break;
-    }
+    switch (state.step) {
+      case "AWAITING_NAME": {
+        const parts = trimmed.split(/\s+/);
+        const firstName = parts[0] ?? "";
+        const lastName = parts.slice(1).join(" ") ?? "";
 
-    case "AWAITING_PICKUP_TIME": {
-      await prisma.conversationState.update({
-        where: { phone },
-        data: { pickupTime: trimmed, step: "AWAITING_PASSENGERS" },
-      });
+        if (!firstName) {
+          await sendTextMessage(phone, "Please send your full name to get started.");
+          break;
+        }
 
-      await sendTextMessage(phone, MESSAGES.ASK_PASSENGERS);
-      break;
-    }
-
-    case "AWAITING_PASSENGERS": {
-      const passengerCount = parseInt(trimmed, 10);
-      if (isNaN(passengerCount) || passengerCount < 1) {
-        await sendTextMessage(phone, MESSAGES.INVALID_NUMBER("passengers"));
+        await prisma.conversationState.update({
+          where: { phone },
+          data: { firstName, lastName, step: "AWAITING_PICKUP" },
+        });
+        await sendTextMessage(phone, MESSAGES.ASK_PICKUP(firstName));
         break;
       }
 
-      await prisma.conversationState.update({
-        where: { phone },
-        data: { passengers: passengerCount, step: "AWAITING_LUGGAGE" },
-      });
-
-      await sendTextMessage(phone, MESSAGES.ASK_LUGGAGE);
-      break;
-    }
-
-    case "AWAITING_LUGGAGE": {
-      const luggageCount = parseInt(trimmed, 10);
-      if (isNaN(luggageCount) || luggageCount < 0) {
-        await sendTextMessage(phone, MESSAGES.INVALID_NUMBER("luggage"));
+      case "AWAITING_PICKUP": {
+        await prisma.conversationState.update({
+          where: { phone },
+          data: { pickup: trimmed, step: "AWAITING_DESTINATION" },
+        });
+        await sendTextMessage(phone, MESSAGES.ASK_DESTINATION);
         break;
       }
 
-      const updated = await prisma.conversationState.update({
-        where: { phone },
-        data: { luggage: luggageCount, step: "COMPLETE" },
-      });
+      case "AWAITING_DESTINATION": {
+        await prisma.conversationState.update({
+          where: { phone },
+          data: { destination: trimmed, step: "AWAITING_PICKUP_TIME" },
+        });
+        await sendTextMessage(phone, MESSAGES.ASK_PICKUP_TIME);
+        break;
+      }
 
-      const scheduledPickupAt = updated.pickupTime ? parsePickupTime(updated.pickupTime) : null;
+      case "AWAITING_PICKUP_TIME": {
+        await prisma.conversationState.update({
+          where: { phone },
+          data: { pickupTime: trimmed, step: "AWAITING_PASSENGERS" },
+        });
+        await sendTextMessage(phone, MESSAGES.ASK_PASSENGERS);
+        break;
+      }
 
-      const booking = await prisma.rideRequest.create({
-        data: {
-          phone,
-          firstName: updated.firstName!,
-          lastName: updated.lastName!,
-          pickup: updated.pickup!,
-          destination: updated.destination!,
-          pickupTime: updated.pickupTime ?? undefined,
-          passengers: updated.passengers ?? 1,
-          luggage: luggageCount,
-          scheduledPickupAt,
-          status: "AWAITING_ADMIN",
-        },
-      });
+      case "AWAITING_PASSENGERS": {
+        const passengerCount = parseInt(trimmed, 10);
+        if (isNaN(passengerCount) || passengerCount < 1) {
+          await sendTextMessage(phone, MESSAGES.INVALID_NUMBER("passengers"));
+          break;
+        }
+        await prisma.conversationState.update({
+          where: { phone },
+          data: { passengers: passengerCount, step: "AWAITING_LUGGAGE" },
+        });
+        await sendTextMessage(phone, MESSAGES.ASK_LUGGAGE);
+        break;
+      }
 
-      const timeLabel = scheduledPickupAt
-        ? formatScheduledTime(scheduledPickupAt)
-        : (updated.pickupTime ?? "ASAP");
+      case "AWAITING_LUGGAGE": {
+        const luggageCount = parseInt(trimmed, 10);
+        if (isNaN(luggageCount) || luggageCount < 0) {
+          await sendTextMessage(phone, MESSAGES.INVALID_NUMBER("luggage"));
+          break;
+        }
 
-      // Notify admin
-      if (config.adminPhone) {
+        const updated = await prisma.conversationState.update({
+          where: { phone },
+          data: { luggage: luggageCount, step: "COMPLETE" },
+        });
+
+        const scheduledPickupAt = updated.pickupTime ? parsePickupTime(updated.pickupTime) : null;
+
+        const booking = await prisma.rideRequest.create({
+          data: {
+            phone,
+            firstName: updated.firstName!,
+            lastName: updated.lastName!,
+            pickup: updated.pickup!,
+            destination: updated.destination!,
+            pickupTime: updated.pickupTime ?? undefined,
+            passengers: updated.passengers ?? 1,
+            luggage: luggageCount,
+            scheduledPickupAt,
+            status: "AWAITING_ADMIN",
+          },
+        });
+
+        const timeLabel = scheduledPickupAt
+          ? formatScheduledTime(scheduledPickupAt)
+          : (updated.pickupTime ?? "ASAP");
+
+        // Notify all admins
+        const admins = await prisma.admin.findMany({ select: { phone: true } });
         const adminMsg =
           `New ride request pending your approval!\n\n` +
           `Customer: ${updated.firstName} ${updated.lastName}\n` +
@@ -349,55 +307,58 @@ export async function handleIncomingMessage(phone: string, text: string) {
           `Reply CONFIRM ${booking.id} to approve\n` +
           `Reply DECLINE ${booking.id} to reject`;
 
-        sendTextMessage(config.adminPhone, adminMsg).catch((err) =>
-          console.error("[conversation] admin notification failed:", err)
+        for (const admin of admins) {
+          sendTextMessage(admin.phone, adminMsg).catch((err) =>
+            console.error(`[conversation] admin ${admin.phone} notification failed:`, err)
+          );
+        }
+
+        await sendTextMessage(
+          phone,
+          MESSAGES.CONFIRM(
+            updated.firstName!,
+            updated.pickup!,
+            updated.destination!,
+            timeLabel,
+            updated.passengers ?? 1,
+            luggageCount
+          )
         );
+        break;
       }
 
-      await sendTextMessage(
-        phone,
-        MESSAGES.CONFIRM(
-          updated.firstName!,
-          updated.pickup!,
-          updated.destination!,
-          timeLabel,
-          updated.passengers ?? 1,
-          luggageCount
-        )
-      );
-      break;
-    }
+      case "AWAITING_DRIVER_CONFIRMATION": {
+        const reply = trimmed.toUpperCase();
 
-    case "AWAITING_DRIVER_CONFIRMATION": {
-      const reply = trimmed.toUpperCase();
-
-      if (reply === "YES") {
-        if (state.pendingBookingId) {
-          await confirmProposedDriver(state.pendingBookingId);
-        }
-        await prisma.conversationState.update({
-          where: { phone },
-          data: { step: "COMPLETE", pendingBookingId: null },
-        });
-        await sendTextMessage(phone, MESSAGES.DRIVER_CONFIRMED);
-      } else if (reply === "NO") {
-        if (state.pendingBookingId) {
-          // declineProposedDriver will either propose the next driver
-          // (keeping state at AWAITING_DRIVER_CONFIRMATION) or
-          // set state to COMPLETE if no more drivers are available
-          await sendTextMessage(phone, `No problem! Let me find you another driver...`);
-          await declineProposedDriver(state.pendingBookingId);
-        } else {
+        if (reply === "YES") {
+          if (state.pendingBookingId) {
+            await confirmProposedDriver(state.pendingBookingId);
+          }
           await prisma.conversationState.update({
             where: { phone },
             data: { step: "COMPLETE", pendingBookingId: null },
           });
-          await sendTextMessage(phone, MESSAGES.DRIVER_DECLINED);
+          await sendTextMessage(phone, MESSAGES.DRIVER_CONFIRMED);
+        } else if (reply === "NO") {
+          if (state.pendingBookingId) {
+            await sendTextMessage(phone, `No problem! Let me find you another driver...`);
+            await declineProposedDriver(state.pendingBookingId);
+          } else {
+            await prisma.conversationState.update({
+              where: { phone },
+              data: { step: "COMPLETE", pendingBookingId: null },
+            });
+            await sendTextMessage(phone, MESSAGES.DRIVER_DECLINED);
+          }
+        } else {
+          await sendTextMessage(phone, MESSAGES.DRIVER_INVALID);
         }
-      } else {
-        await sendTextMessage(phone, MESSAGES.DRIVER_INVALID);
+        break;
       }
-      break;
     }
+  } catch (err) {
+    console.error(`[conversation] Error handling message from ${phone}:`, err);
+    // Don't re-throw — let the message handler in whatsapp.ts handle the error response
+    throw err;
   }
 }

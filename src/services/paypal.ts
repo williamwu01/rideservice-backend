@@ -19,7 +19,7 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-export async function createOrder(amount: number, bookingId: string) {
+export async function createOrder(amount: number, bookingId: string, returnUrl?: string, cancelUrl?: string) {
   const token = await getAccessToken();
 
   const res = await fetch(`${config.paypal.baseUrl}/v2/checkout/orders`, {
@@ -44,6 +44,8 @@ export async function createOrder(amount: number, bookingId: string) {
         brand_name: "Loop Rideshare",
         landing_page: "NO_PREFERENCE",
         user_action: "PAY_NOW",
+        ...(returnUrl && { return_url: returnUrl }),
+        ...(cancelUrl && { cancel_url: cancelUrl }),
       },
     }),
   });

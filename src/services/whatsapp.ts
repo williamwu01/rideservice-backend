@@ -3,6 +3,12 @@ import qrcode from "qrcode-terminal";
 
 let client: Client | null = null;
 let isStarting = false;
+let startAttempts = 0;
+
+// Exponential backoff: 5s, 15s, 30s, 60s, 120s then give up
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
+
+const MAX_MESSAGE_LENGTH = 2_000;
 
 // Dev-mode outbox: captures messages during simulation so nothing real is sent
 const devOutbox: { to: string; body: string; sentAt: string }[] = [];
@@ -17,76 +23,120 @@ export function flushDevOutbox() {
 
 export async function startWhatsApp() {
   if (isStarting || client) return;
+  if (startAttempts >= RETRY_DELAYS_MS.length) {
+    console.error(`❌ WhatsApp: Max startup attempts (${RETRY_DELAYS_MS.length}) reached. Giving up.`);
+    return;
+  }
+
   isStarting = true;
+  startAttempts++;
 
-  client = new Client({
-    authStrategy: new LocalAuth({
-      dataPath: "whatsapp-session",
-    }),
-    puppeteer: {
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    },
-  });
+  try {
+    console.log(`[WhatsApp] Starting... (attempt ${startAttempts}/${RETRY_DELAYS_MS.length})`);
 
-  client.on("qr", (qr) => {
-    console.log("\n📱 Scan this QR code with WhatsApp:\n");
-    qrcode.generate(qr, { small: true });
-  });
+    client = new Client({
+      authStrategy: new LocalAuth({ dataPath: "whatsapp-session" }),
+      puppeteer: {
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      },
+    });
 
-  client.on("ready", () => {
+    client.on("qr", (qr) => {
+      console.log("\n📱 Scan this QR code with WhatsApp:\n");
+      qrcode.generate(qr, { small: true });
+    });
+
+    client.on("ready", () => {
+      isStarting = false;
+      startAttempts = 0;
+      console.log("✅ WhatsApp connected!");
+    });
+
+    client.on("disconnected", (reason) => {
+      console.warn(`⚠️  WhatsApp disconnected: ${reason}`);
+      client = null;
+      isStarting = false;
+
+      if (reason === "LOGOUT") {
+        console.log("User logged out — delete whatsapp-session and restart to re-scan QR.");
+        startAttempts = RETRY_DELAYS_MS.length; // prevent retries
+        return;
+      }
+
+      scheduleReconnect();
+    });
+
+    client.on("error", (error) => {
+      console.error(`[WhatsApp] Client error:`, error);
+    });
+
+    client.on("message", async (msg: Message) => {
+      // Ignore own messages and group chats
+      if (msg.fromMe) return;
+      if (msg.from.endsWith("@g.us")) return;
+
+      // Guard against oversized payloads
+      if (msg.body && msg.body.length > MAX_MESSAGE_LENGTH) {
+        console.warn(`[message] Ignoring oversized message from ${msg.from} (${msg.body.length} chars)`);
+        return;
+      }
+
+      try {
+        const { config } = await import("../config/env");
+        const senderId = msg.from.replace(/@.*/, "").replace(/\D/g, "");
+        const cleanedBlockedPhones = config.blockedPhones.map((p) => p.replace(/\D/g, ""));
+        if (cleanedBlockedPhones.includes(senderId)) return;
+
+        const jid = msg.from;
+
+        // Driver GPS location share
+        if (msg.type === "location" && msg.location) {
+          const { handleLocationMessage } = await import("./conversation");
+          await handleLocationMessage(
+            jid,
+            parseFloat(msg.location.latitude as unknown as string),
+            parseFloat(msg.location.longitude as unknown as string)
+          );
+          return;
+        }
+
+        const text = msg.body;
+        if (!text) return;
+
+        const { isAdmin, handleAdminCommand } = await import("./admin/index");
+        const phone = jid.replace(/@.*/, "").replace(/\D/g, "");
+
+        if (await isAdmin(phone)) {
+          await handleAdminCommand(phone, text);
+        } else {
+          const { handleIncomingMessage } = await import("./conversation");
+          await handleIncomingMessage(jid, text);
+        }
+      } catch (err) {
+        console.error(`[message] Unhandled error from ${msg.from}:`, err);
+        // Best-effort apology message — don't let this throw
+        sendTextMessage(msg.from, "Sorry, something went wrong on our end. Please try again in a moment.").catch(() => {});
+      }
+    });
+
+    await client.initialize();
+  } catch (error) {
     isStarting = false;
-    console.log("✅ WhatsApp connected!");
-  });
-
-  client.on("disconnected", (reason) => {
-    console.log("WhatsApp disconnected:", reason);
+    console.error(`❌ WhatsApp init failed (attempt ${startAttempts}/${RETRY_DELAYS_MS.length}):`, error);
     client = null;
-    isStarting = false;
-    if (reason === "LOGOUT") {
-      console.log("Logged out — delete the whatsapp-session folder and restart to re-scan QR.");
-      return;
-    }
-    setTimeout(startWhatsApp, 5000);
-  });
+    scheduleReconnect();
+  }
+}
 
-  // Fire for messages received
-  client.on("message", async (msg: Message) => {
-    console.log(`[message] from=${msg.from} type=${msg.type} body="${msg.body}" fromMe=${msg.fromMe}`);
-    if (msg.from.endsWith("@g.us")) return;
-    const { config } = await import("../config/env");
-    const senderId = msg.from.replace(/@.*/, "").replace(/\D/g, "");
-    if (config.blockedPhones.includes(senderId)) return;
-
-    const jid = msg.from;
-    if (!jid) return;
-
-    // Handle location messages (driver sharing their GPS position)
-    if (msg.type === "location" && msg.location) {
-      const { handleLocationMessage } = await import("./conversation");
-      await handleLocationMessage(jid, msg.location.latitude, msg.location.longitude);
-      return;
-    }
-
-    const text = msg.body;
-    if (!jid || !text) return;
-    const { isAdmin, handleAdminCommand } = await import("./admin/index");
-    const phone = jid.replace(/@.*/, "").replace(/\D/g, "");
-
-    if (await isAdmin(phone)) {
-      await handleAdminCommand(phone, text);
-    } else {
-      const { handleIncomingMessage } = await import("./conversation");
-      await handleIncomingMessage(jid, text);
-    }
-  });
-
-  // Fire for ALL messages including sent — helps debug
-  client.on("message_create", (msg: Message) => {
-    console.log(`[message_create] from=${msg.from} to=${msg.to} body="${msg.body}" fromMe=${msg.fromMe}`);
-  });
-
-  await client.initialize();
+function scheduleReconnect() {
+  if (startAttempts >= RETRY_DELAYS_MS.length) {
+    console.error("❌ WhatsApp: Max reconnect attempts reached. Bot is disabled.");
+    return;
+  }
+  const delay = RETRY_DELAYS_MS[startAttempts] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
+  console.log(`[WhatsApp] Reconnecting in ${delay / 1000}s... (attempt ${startAttempts + 1}/${RETRY_DELAYS_MS.length})`);
+  setTimeout(startWhatsApp, delay);
 }
 
 export async function sendTextMessage(phone: string, text: string) {
@@ -97,32 +147,25 @@ export async function sendTextMessage(phone: string, text: string) {
     return;
   }
 
-  // phone may be a full JID (from msg.from like "61242056171708@c.us")
-  // or a plain phone number from the frontend ("61412345678")
   let jid: string;
   if (phone.includes("@")) {
-    // Already a JID — use directly (handles LID accounts)
     jid = phone;
   } else {
-    // Plain phone number from frontend — resolve via WhatsApp to get proper ID
     const digits = phone.replace(/\D/g, "");
     const numberId = await client.getNumberId(digits);
     if (!numberId) {
-      console.error(`[sendTextMessage] ${digits} is not registered on WhatsApp — skipping`);
+      console.error(`[sendTextMessage] ${digits} is not on WhatsApp — skipping`);
       return;
     }
     jid = numberId._serialized;
   }
 
-  console.log(`[sendTextMessage] sending to ${jid}`);
   await client.sendMessage(jid, text);
-  console.log(`[sendTextMessage] sent OK to ${jid}`);
 }
 
 export async function sendImageMessage(phone: string, imagePath: string, caption: string) {
   if (!client || simulationMode) {
-    const entry = { to: phone, body: `[IMAGE] ${caption}`, sentAt: new Date().toISOString() };
-    devOutbox.push(entry);
+    devOutbox.push({ to: phone, body: `[IMAGE] ${caption}`, sentAt: new Date().toISOString() });
     console.log(`[sendImageMessage][sim] to=${phone}\n${caption}\n`);
     return;
   }
@@ -134,14 +177,12 @@ export async function sendImageMessage(phone: string, imagePath: string, caption
     const digits = phone.replace(/\D/g, "");
     const numberId = await client.getNumberId(digits);
     if (!numberId) {
-      console.error(`[sendImageMessage] ${digits} is not registered on WhatsApp — skipping`);
+      console.error(`[sendImageMessage] ${digits} is not on WhatsApp — skipping`);
       return;
     }
     jid = numberId._serialized;
   }
 
   const media = MessageMedia.fromFilePath(imagePath);
-  console.log(`[sendImageMessage] sending to ${jid}`);
   await client.sendMessage(jid, media, { caption });
-  console.log(`[sendImageMessage] sent OK to ${jid}`);
 }

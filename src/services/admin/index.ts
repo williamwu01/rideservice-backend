@@ -2,6 +2,7 @@ import { prisma } from "../../lib/prisma";
 import { sendTextMessage } from "../whatsapp";
 import { handlePromoCommand } from "./promoCommands";
 import { handlePricingCommand } from "./pricingCommands";
+import { handleBookingCommand } from "./bookingCommands";
 
 export async function isAdmin(phone: string): Promise<boolean> {
   const admin = await prisma.admin.findUnique({ where: { phone } });
@@ -11,6 +12,12 @@ export async function isAdmin(phone: string): Promise<boolean> {
 export async function handleAdminCommand(phone: string, text: string) {
   const parts = text.trim().split(/\s+/);
   const lower = text.trim().toLowerCase();
+
+  // Booking approval commands
+  if (lower.startsWith("confirm ") || lower.startsWith("decline ")) {
+    await handleBookingCommand(phone, parts);
+    return;
+  }
 
   // Promo commands
   if (
@@ -22,46 +29,26 @@ export async function handleAdminCommand(phone: string, text: string) {
     return;
   }
 
-  // Help triggers
-  if (lower === "help" || lower === "more info") {
-    await sendTextMessage(
-      phone,
-      `🤖 *Admin Commands*\n\n` +
-      `*💰 Pricing:*\n` +
-      `ADMIN PRICE SHOW\n` +
-      `ADMIN PRICE LIST\n` +
-      `ADMIN PRICE ACTIVATE <name>\n` +
-      `ADMIN PRICE SET <field> <value>\n\n` +
-      `*🎟 Promo Codes:*\n` +
-      `Create Promocode <amount>\n` +
-      `Create Promocode <amount> uses <limit>\n` +
-      `Create Promocode <CODE> <amount>\n` +
-      `Create Promocode <CODE> <amount> uses <limit>\n` +
-      `Disable Promocode <CODE>\n` +
-      `List Promocodes`
-    );
-    return;
-  }
-
   // Pricing commands
   if (lower.startsWith("admin price")) {
     await handlePricingCommand(phone, parts);
     return;
   }
 
-  // Help — show all available commands
+  // Help menu
   await sendTextMessage(
     phone,
-    `🤖 *Admin Commands*\n\n` +
-    `*💰 Pricing:*\n` +
+    `*Admin Commands*\n\n` +
+    `*Bookings:*\n` +
+    `CONFIRM <bookingId>\n` +
+    `DECLINE <bookingId>\n\n` +
+    `*Pricing:*\n` +
     `ADMIN PRICE SHOW\n` +
     `ADMIN PRICE LIST\n` +
     `ADMIN PRICE ACTIVATE <name>\n` +
     `ADMIN PRICE SET <field> <value>\n\n` +
-    `*🎟 Promo Codes:*\n` +
+    `*Promo Codes:*\n` +
     `Create Promocode <amount>\n` +
-    `Create Promocode <amount> uses <limit>\n` +
-    `Create Promocode <CODE> <amount>\n` +
     `Create Promocode <CODE> <amount> uses <limit>\n` +
     `Disable Promocode <CODE>\n` +
     `List Promocodes`

@@ -7,7 +7,7 @@ import { redeemPromoCode, validatePromoCode } from "../services/promo";
 // Returns orderId + approveUrl for the PayPal JS SDK
 export const createPaymentOrder = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { bookingId, promoCode } = req.body;
+    const { bookingId, promoCode, returnUrl, cancelUrl } = req.body;
 
     if (!bookingId) {
       res.status(400).json({ success: false, error: "Missing bookingId" });
@@ -46,7 +46,7 @@ export const createPaymentOrder = async (req: Request, res: Response, next: Next
       0.50 // PayPal minimum
     );
 
-    const order = await createOrder(finalFare, bookingId);
+    const order = await createOrder(finalFare, bookingId, returnUrl, cancelUrl);
 
     // Lock in the fare and promo on the booking
     await prisma.rideRequest.update({

@@ -14,6 +14,9 @@ type CreateBookingInput = {
   pickupTime?: string;
   passengers?: number;
   luggage?: number;
+  estimatedFare?: number;
+  distanceKm?: number;
+  durationMin?: number;
 };
 
 type BookingFilters = {
@@ -37,6 +40,9 @@ export async function createBooking(data: CreateBookingInput) {
       passengers: data.passengers ?? 1,
       luggage: data.luggage ?? 0,
       scheduledPickupAt,
+      estimatedFare: data.estimatedFare,
+      distanceKm: data.distanceKm,
+      durationMin: data.durationMin,
       status: "AWAITING_ADMIN",
     },
   });

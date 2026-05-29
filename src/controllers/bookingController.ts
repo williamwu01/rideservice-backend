@@ -3,7 +3,7 @@ import * as bookingService from "../services/booking";
 
 export const bookRide = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { phone, firstName, lastName, pickup, destination, pickupTime, passengers, luggage } = req.body;
+    const { phone, firstName, lastName, pickup, destination, pickupTime, passengers, luggage, estimatedFare, distanceKm, durationMin } = req.body;
 
     if (!phone || !firstName || !lastName || !pickup || !destination) {
       res.status(400).json({ success: false, error: "Missing required fields: phone, firstName, lastName, pickup, destination" });
@@ -19,6 +19,9 @@ export const bookRide = async (req: Request, res: Response, next: NextFunction) 
       pickupTime,
       passengers: passengers !== undefined ? parseInt(passengers, 10) : undefined,
       luggage: luggage !== undefined ? parseInt(luggage, 10) : undefined,
+      estimatedFare: estimatedFare !== undefined ? parseFloat(estimatedFare) : undefined,
+      distanceKm: distanceKm !== undefined ? parseFloat(distanceKm) : undefined,
+      durationMin: durationMin !== undefined ? parseFloat(durationMin) : undefined,
     });
 
     res.status(201).json({ success: true, booking });

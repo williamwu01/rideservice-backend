@@ -8,7 +8,7 @@ import driverRoutes from "./routes/drivers";
 import estimateRoutes from "./routes/estimate";
 import paymentRoutes from "./routes/payment";
 import { startWhatsApp } from "./services/whatsapp";
-import { startScheduler } from "./services/scheduler";
+// import { startScheduler } from "./services/scheduler"; // dev 2 — needs scheduledPickupAt in schema
 import { config, validateConfig } from "./config/env";
 import { errorHandler } from "./middleware/errorHandler";
 
@@ -43,8 +43,7 @@ app.use(errorHandler);
 const server = app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT} (${config.nodeEnv})`);
   startWhatsApp();
-  startScheduler();
-  // startWhatsApp();
+  // startScheduler(); // dev 2 — needs scheduledPickupAt in schema
 });
 
 process.on("SIGINT", () => {
