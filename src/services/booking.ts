@@ -4,6 +4,7 @@ import { sendTextMessage, sendImageMessage } from "./whatsapp";
 import { config } from "../config/env";
 import { geocodeAddress, haversineKm } from "./geocode";
 import { parsePickupTime, formatScheduledTime } from "./timeparse";
+import { createOrder } from "./paypal";
 
 type CreateBookingInput = {
   phone: string;
@@ -161,15 +162,19 @@ export async function selectAndProposeDriver(bookingId: string): Promise<boolean
   if (!booking) throw new Error(`Booking ${bookingId} not found`);
 
   // Find online drivers with capacity, excluding already tried ones
+  console.log(`[selectDriver] booking passengers=${booking.passengers} luggage=${booking.luggage} triedDriverIds=${JSON.stringify(booking.triedDriverIds)}`);
+
   const candidates = await prisma.driver.findMany({
     where: {
       whatsappEnabled: true,
       isOnline: true,
-      maxPassengers: { gte: booking.passengers },
-      maxLuggage: { gte: booking.luggage },
+      ...(booking.passengers !== null && { maxPassengers: { gte: booking.passengers } }),
+      ...(booking.luggage !== null && { maxLuggage: { gte: booking.luggage } }),
       id: { notIn: booking.triedDriverIds.length > 0 ? booking.triedDriverIds : [""] },
     },
   });
+
+  console.log(`[selectDriver] found ${candidates.length} candidate(s):`, candidates.map(d => `${d.firstName} isOnline=${d.isOnline} whatsappEnabled=${d.whatsappEnabled} maxPassengers=${d.maxPassengers} maxLuggage=${d.maxLuggage}`));
 
   if (candidates.length === 0) {
     await sendTextMessage(
@@ -247,6 +252,24 @@ export async function confirmProposedDriver(bookingId: string) {
       proposedDriverId: null,
     },
   });
+
+  // Send payment link to customer
+  const fare = booking.finalFare ?? booking.estimatedFare;
+  if (fare) {
+    try {
+      const { orderId, approveUrl } = await createOrder(fare, bookingId);
+      await prisma.rideRequest.update({
+        where: { id: bookingId },
+        data: { paypalOrderId: orderId, paymentStatus: "PENDING" },
+      });
+      await sendTextMessage(
+        booking.phone,
+        `Your driver is confirmed! Please complete your payment to secure the booking:\n\n💳 Pay now: ${approveUrl}\n\nAmount: $${fare.toFixed(2)} CAD`
+      );
+    } catch (err) {
+      console.error("[confirmProposedDriver] Payment link failed:", err);
+    }
+  }
 
   // Notify driver with full job details
   const customerDigits = booking.phone.replace(/@.*/, "").replace(/\D/g, "");

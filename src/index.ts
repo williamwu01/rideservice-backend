@@ -8,7 +8,7 @@ import driverRoutes from "./routes/drivers";
 import estimateRoutes from "./routes/estimate";
 import paymentRoutes from "./routes/payment";
 import { startWhatsApp } from "./services/whatsapp";
-// import { startScheduler } from "./services/scheduler"; // dev 2 — needs scheduledPickupAt in schema
+import { startScheduler } from "./services/scheduler";
 import { config, validateConfig } from "./config/env";
 import { errorHandler } from "./middleware/errorHandler";
 
@@ -25,6 +25,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors({ origin: config.corsOrigin }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 app.get("/health", (_req, res) => {
@@ -43,7 +44,7 @@ app.use(errorHandler);
 const server = app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT} (${config.nodeEnv})`);
   startWhatsApp();
-  // startScheduler(); // dev 2 — needs scheduledPickupAt in schema
+  startScheduler();
 });
 
 process.on("SIGINT", () => {

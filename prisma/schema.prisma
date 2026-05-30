@@ -99,10 +99,15 @@ model RideRequest {
   lastName    String
   pickup      String
   destination String
-  pickupTime  String?
-  status      RideStatus @default(PENDING)
-  driverId      String?
-  driver        Driver?    @relation(fields: [driverId], references: [id])
+  pickupTime        String?
+  passengers        Int?
+  luggage           Int?
+  scheduledPickupAt DateTime?
+  status            RideStatus @default(PENDING)
+  driverId          String?
+  driver            Driver?    @relation(fields: [driverId], references: [id])
+  proposedDriverId  String?
+  triedDriverIds    String[]
   estimatedFare Float?
   distanceKm    Float?
   durationMin   Int?

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { startConversation, handleIncomingMessage } from "../services/conversation";
-import { flushDevOutbox, enableSimulationMode, disableSimulationMode } from "../services/whatsapp";
+import { flushDevOutbox, enableSimulationMode, disableSimulationMode } from "../services/whatsapp"; // used by /simulate
+import { isAdmin, handleAdminCommand } from "../services/admin/index";
 import { requireApiKey } from "../middleware/apiKey";
 import { prisma } from "../lib/prisma";
 
@@ -22,18 +23,10 @@ router.post("/start", async (req: Request, res: Response) => {
   console.log(`[whatsapp/start] raw="${phone}" normalized="${normalized}"`);
 
   try {
-    enableSimulationMode();
-    let result;
-    try {
-      result = await startConversation(normalized, true);
-    } finally {
-      disableSimulationMode();
-    }
-
-    const botReplies = flushDevOutbox();
+    const result = await startConversation(normalized, true);
     const state = await prisma.conversationState.findUnique({ where: { phone: normalized } });
 
-    res.json({ success: true, ...result, botReplies, state });
+    res.json({ success: true, ...result, state });
   } catch (err: any) {
     console.error("[whatsapp/start] Error:", err?.message, err?.stack);
     res.status(500).json({ error: "Failed to start conversation" });
@@ -56,11 +49,10 @@ router.post("/simulate", requireApiKey, async (req: Request, res: Response) => {
   }
 
   try {
-    enableSimulationMode();
-    try {
+    if (await isAdmin(phone)) {
+      await handleAdminCommand(phone, message);
+    } else {
       await handleIncomingMessage(phone, message);
-    } finally {
-      disableSimulationMode();
     }
 
     const botReplies = flushDevOutbox();

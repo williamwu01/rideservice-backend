@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import { sendTextMessage } from "./whatsapp";
 import { confirmProposedDriver, declineProposedDriver, startBooking, completeBooking } from "./booking";
 import { parsePickupTime, formatScheduledTime } from "./timeparse";
+import { calculateEstimate } from "./estimate";
 
 const MESSAGES = {
   GREETING:
@@ -274,6 +275,18 @@ export async function handleIncomingMessage(phone: string, text: string) {
 
         const scheduledPickupAt = updated.pickupTime ? parsePickupTime(updated.pickupTime) : null;
 
+        let estimatedFare: number | undefined;
+        let distanceKm: number | undefined;
+        let durationMin: number | undefined;
+        try {
+          const estimate = await calculateEstimate(updated.pickup!, updated.destination!);
+          estimatedFare = estimate.fare;
+          distanceKm = estimate.distanceKm;
+          durationMin = estimate.durationMin;
+        } catch (err) {
+          console.warn("[conversation] Fare estimation failed, booking without fare:", err);
+        }
+
         const booking = await prisma.rideRequest.create({
           data: {
             phone,
@@ -285,6 +298,9 @@ export async function handleIncomingMessage(phone: string, text: string) {
             passengers: updated.passengers ?? 1,
             luggage: luggageCount,
             scheduledPickupAt,
+            estimatedFare,
+            distanceKm,
+            durationMin,
             status: "AWAITING_ADMIN",
           },
         });
