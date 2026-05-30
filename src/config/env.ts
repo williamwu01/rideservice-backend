@@ -1,6 +1,7 @@
 export const config = {
   port: parseInt(process.env.PORT || "5000", 10),
   nodeEnv: process.env.NODE_ENV || "development",
+  simulatorMode: process.env.SIMULATOR_MODE === "true",
   database: {
     url: process.env.DATABASE_URL,
   },

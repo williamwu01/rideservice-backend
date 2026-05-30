@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { prisma } from "../lib/prisma";
 import { createOrder, captureOrder } from "../services/paypal";
 import { redeemPromoCode, validatePromoCode } from "../services/promo";
+import { config } from "../config/env";
 
 // Step 1 — frontend calls this to create a PayPal order
 // Returns orderId + approveUrl for the PayPal JS SDK
@@ -46,6 +47,36 @@ export const createPaymentOrder = async (req: Request, res: Response, next: Next
       0.50 // PayPal minimum
     );
 
+    if (config.simulatorMode) {
+      const simOrderId = `SIM_${Date.now()}`;
+      const simApproveUrl = returnUrl
+        ? `${returnUrl}?token=${simOrderId}`
+        : `http://localhost:3000/book/success?token=${simOrderId}`;
+
+      await prisma.rideRequest.update({
+        where: { id: bookingId },
+        data: {
+          paypalOrderId: simOrderId,
+          paymentStatus: "PENDING",
+          promoCode: appliedPromo,
+          promoDiscount: discount,
+          finalFare,
+        },
+      });
+
+      res.json({
+        success: true,
+        orderId: simOrderId,
+        approveUrl: simApproveUrl,
+        breakdown: {
+          estimatedFare: booking.estimatedFare,
+          promoDiscount: discount,
+          finalFare,
+        },
+      });
+      return;
+    }
+
     const order = await createOrder(finalFare, bookingId, returnUrl, cancelUrl);
 
     // Lock in the fare and promo on the booking
@@ -78,7 +109,7 @@ export const createPaymentOrder = async (req: Request, res: Response, next: Next
 // Step 2 — called after customer approves payment in PayPal UI
 export const capturePayment = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { orderId } = req.params;
+    const orderId = req.params.orderId as string;
 
     const booking = await prisma.rideRequest.findFirst({
       where: { paypalOrderId: orderId },
@@ -86,6 +117,23 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
 
     if (!booking) {
       res.status(404).json({ success: false, error: "Booking not found for this order" });
+      return;
+    }
+
+    if (config.simulatorMode || orderId.startsWith("SIM_")) {
+      await prisma.rideRequest.update({
+        where: { id: booking.id },
+        data: { paymentStatus: "PAID" },
+      });
+      if (booking.promoCode) {
+        await redeemPromoCode(booking.promoCode);
+      }
+      res.json({
+        success: true,
+        message: "Simulated payment captured",
+        bookingId: booking.id,
+        amountCharged: booking.finalFare ?? booking.estimatedFare ?? 0,
+      });
       return;
     }
 
@@ -116,6 +164,43 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
       bookingId: booking.id,
       amountCharged: capture.amount,
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Validate a promo code without creating a PayPal order — used by the frontend to show a discount preview
+export const validatePromo = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { bookingId, promoCode } = req.body;
+
+    if (!bookingId || !promoCode) {
+      res.status(400).json({ success: false, error: "Missing bookingId or promoCode" });
+      return;
+    }
+
+    const booking = await prisma.rideRequest.findUnique({ where: { id: bookingId } });
+    if (!booking) {
+      res.status(404).json({ success: false, error: "Booking not found" });
+      return;
+    }
+    if (!booking.estimatedFare) {
+      res.status(400).json({ success: false, error: "Booking has no fare estimate" });
+      return;
+    }
+
+    const result = await validatePromoCode(promoCode.toUpperCase());
+    if (!result.valid) {
+      res.status(400).json({ success: false, error: result.error });
+      return;
+    }
+
+    const finalFare = Math.max(
+      parseFloat((booking.estimatedFare - result.discount).toFixed(2)),
+      0.50
+    );
+
+    res.json({ success: true, discount: result.discount, finalFare });
   } catch (err) {
     next(err);
   }

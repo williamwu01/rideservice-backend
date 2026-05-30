@@ -7,7 +7,8 @@ import bookingRoutes from "./routes/bookings";
 import driverRoutes from "./routes/drivers";
 import estimateRoutes from "./routes/estimate";
 import paymentRoutes from "./routes/payment";
-import { startWhatsApp } from "./services/whatsapp";
+import simRoutes from "./routes/sim";
+import { startWhatsApp, enableSimulationMode } from "./services/whatsapp";
 import { startScheduler } from "./services/scheduler";
 import { config, validateConfig } from "./config/env";
 import { errorHandler } from "./middleware/errorHandler";
@@ -37,13 +38,19 @@ app.use("/api", bookingRoutes);
 app.use("/api", driverRoutes);
 app.use("/api", estimateRoutes);
 app.use("/api", paymentRoutes);
+app.use("/api/sim", simRoutes);
 
 // Error handler must be last
 app.use(errorHandler);
 
 const server = app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT} (${config.nodeEnv})`);
-  startWhatsApp();
+  if (config.simulatorMode) {
+    enableSimulationMode();
+    console.log(`✅ Server running on http://localhost:${PORT} (${config.nodeEnv}) [SIMULATOR MODE — WhatsApp & payments are mocked]`);
+  } else {
+    console.log(`✅ Server running on http://localhost:${PORT} (${config.nodeEnv})`);
+    startWhatsApp();
+  }
   startScheduler();
 });
 

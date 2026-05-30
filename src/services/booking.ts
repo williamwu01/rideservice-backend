@@ -179,20 +179,17 @@ export async function selectAndProposeDriver(bookingId: string): Promise<boolean
   if (candidates.length === 0) {
     await sendTextMessage(
       booking.phone,
-      `Sorry, no drivers are available right now. Our team has been notified and will follow up with you shortly.`
+      `We're finding the best driver for you — please hold tight, we'll update you shortly.`
     );
 
-    if (config.adminPhone) {
-      await sendTextMessage(
-        config.adminPhone,
-        `No available drivers for booking ${bookingId} (${booking.firstName} ${booking.lastName}). All drivers tried or none online.`
-      );
+    // Notify all admins to assign manually — do NOT cancel the booking
+    const admins = await prisma.admin.findMany({ select: { phone: true } });
+    for (const admin of admins) {
+      sendTextMessage(
+        admin.phone,
+        `⚠️ No available drivers for booking ${bookingId} (${booking.firstName} ${booking.lastName}). Please assign a driver manually.\nReply: ASSIGN ${bookingId} <driverId>`
+      ).catch(() => {});
     }
-
-    await prisma.rideRequest.update({
-      where: { id: bookingId },
-      data: { status: "CANCELLED" },
-    });
 
     return false;
   }
@@ -257,7 +254,18 @@ export async function confirmProposedDriver(bookingId: string) {
   const fare = booking.finalFare ?? booking.estimatedFare;
   if (fare) {
     try {
-      const { orderId, approveUrl } = await createOrder(fare, bookingId);
+      let orderId: string;
+      let approveUrl: string;
+
+      if (config.simulatorMode) {
+        orderId = `SIM_${Date.now()}`;
+        approveUrl = `http://localhost:3000/book/success?token=${orderId}`;
+      } else {
+        const order = await createOrder(fare, bookingId);
+        orderId = order.orderId;
+        approveUrl = order.approveUrl;
+      }
+
       await prisma.rideRequest.update({
         where: { id: bookingId },
         data: { paypalOrderId: orderId, paymentStatus: "PENDING" },
@@ -351,7 +359,12 @@ async function proposeDriverToCustomer(
 
   if (driver.photo) {
     const imagePath = path.join(process.cwd(), driver.photo);
-    await sendImageMessage(booking.phone, imagePath, caption);
+    try {
+      await sendImageMessage(booking.phone, imagePath, caption);
+    } catch (err) {
+      console.warn(`[proposeDriver] image send failed, falling back to text:`, err);
+      await sendTextMessage(booking.phone, caption);
+    }
   } else {
     await sendTextMessage(booking.phone, caption);
   }
