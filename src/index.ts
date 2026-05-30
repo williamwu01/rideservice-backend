@@ -7,6 +7,7 @@ import bookingRoutes from "./routes/bookings";
 import driverRoutes from "./routes/drivers";
 import estimateRoutes from "./routes/estimate";
 import paymentRoutes from "./routes/payment";
+import placesRoutes from "./routes/places";
 import simRoutes from "./routes/sim";
 import { startWhatsApp, enableSimulationMode } from "./services/whatsapp";
 import { startScheduler } from "./services/scheduler";
@@ -38,6 +39,7 @@ app.use("/api", bookingRoutes);
 app.use("/api", driverRoutes);
 app.use("/api", estimateRoutes);
 app.use("/api", paymentRoutes);
+app.use("/api/places", placesRoutes);
 app.use("/api/sim", simRoutes);
 
 // Error handler must be last

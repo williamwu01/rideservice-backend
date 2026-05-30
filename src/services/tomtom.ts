@@ -1,7 +1,7 @@
 import { config } from "../config/env";
 
 export async function geocode(address: string): Promise<{ lat: number; lon: number }> {
-  const url = `${config.tomtom.baseUrl}/search/2/geocode/${encodeURIComponent(address)}.json?key=${config.tomtom.apiKey}&countrySet=CA&limit=1`;
+  const url = `${config.tomtom.baseUrl}/search/2/search/${encodeURIComponent(address)}.json?key=${config.tomtom.apiKey}&countrySet=CA&limit=1&typeahead=false`;
 
   const res = await fetch(url);
   if (!res.ok) throw new Error(`TomTom geocoding failed (${res.status}): ${address}`);
