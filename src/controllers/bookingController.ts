@@ -85,7 +85,7 @@ export const acceptBooking = async (req: Request, res: Response, next: NextFunct
       res.status(400).json({ success: false, error: "Missing driverId" });
       return;
     }
-    const booking = await bookingService.acceptBooking(req.params.id as string, driverId);
+    const booking = await bookingService.assignDriver(req.params.id as string, driverId);
     res.json({ success: true, booking });
   } catch (err) {
     next(err);
