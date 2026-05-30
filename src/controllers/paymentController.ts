@@ -3,6 +3,8 @@ import { prisma } from "../lib/prisma";
 import { createOrder, captureOrder } from "../services/paypal";
 import { redeemPromoCode, validatePromoCode } from "../services/promo";
 import { config } from "../config/env";
+import { sendTextMessage } from "../services/whatsapp";
+import { formatScheduledTime } from "../services/timeparse";
 
 // Step 1 — frontend calls this to create a PayPal order
 // Returns orderId + approveUrl for the PayPal JS SDK
@@ -106,6 +108,34 @@ export const createPaymentOrder = async (req: Request, res: Response, next: Next
   }
 };
 
+// Notify the assigned driver with full job details after payment is confirmed
+async function notifyDriverOnPayment(bookingId: string) {
+  const booking = await prisma.rideRequest.findUnique({
+    where: { id: bookingId },
+    include: { driver: true },
+  });
+  if (!booking?.driver) return;
+
+  const customerDigits = booking.phone.replace(/@.*/, "").replace(/\D/g, "");
+  const customerLink = `https://wa.me/${customerDigits}`;
+  const timeLabel = booking.scheduledPickupAt
+    ? formatScheduledTime(booking.scheduledPickupAt)
+    : (booking.pickupTime ?? "ASAP");
+
+  await sendTextMessage(
+    booking.driver.phone,
+    `✅ Payment received — you're confirmed for this ride!\n\n` +
+    `Customer: ${booking.firstName} ${booking.lastName}\n` +
+    `Pickup: ${booking.pickup}\n` +
+    `Destination: ${booking.destination}\n` +
+    `Pickup Time: ${timeLabel}\n` +
+    `Passengers: ${booking.passengers}\n` +
+    `Luggage: ${booking.luggage}\n` +
+    `Contact: ${customerLink}\n\n` +
+    `Reply START ${bookingId} when you've picked up the customer.`
+  );
+}
+
 // Step 2 — called after customer approves payment in PayPal UI
 export const capturePayment = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -128,6 +158,7 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
       if (booking.promoCode) {
         await redeemPromoCode(booking.promoCode);
       }
+      await notifyDriverOnPayment(booking.id);
       res.json({
         success: true,
         message: "Simulated payment captured",
@@ -148,7 +179,6 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
       return;
     }
 
-    // Mark paid and redeem promo if used
     await prisma.rideRequest.update({
       where: { id: booking.id },
       data: { paymentStatus: "PAID" },
@@ -157,6 +187,8 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
     if (booking.promoCode) {
       await redeemPromoCode(booking.promoCode);
     }
+
+    await notifyDriverOnPayment(booking.id);
 
     res.json({
       success: true,

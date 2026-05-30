@@ -1,6 +1,6 @@
 import { config } from "../config/env";
 
-export async function geocode(address: string): Promise<{ lat: number; lon: number }> {
+export async function geocode(address: string): Promise<{ lat: number; lon: number; formattedAddress: string }> {
   const url = `${config.tomtom.baseUrl}/search/2/search/${encodeURIComponent(address)}.json?key=${config.tomtom.apiKey}&countrySet=CA&limit=1&typeahead=false`;
 
   const res = await fetch(url);
@@ -11,7 +11,16 @@ export async function geocode(address: string): Promise<{ lat: number; lon: numb
   //we need to send a message back to users if this edgecase hits to reconfirm their address
   if (!result) throw new Error(`No location found for: "${address}"`);
 
-  return { lat: result.position.lat, lon: result.position.lon };
+  const addr = result.address ?? {};
+  const parts: string[] = [];
+  if (addr.streetNumber && addr.streetName) parts.push(`${addr.streetNumber} ${addr.streetName}`);
+  else if (addr.streetName) parts.push(addr.streetName);
+  if (addr.municipality) parts.push(addr.municipality);
+  if (addr.countrySubdivision) parts.push(addr.countrySubdivision);
+  if (addr.postalCode) parts.push(addr.postalCode);
+  const formattedAddress = parts.length > 0 ? parts.join(", ") : (addr.freeformAddress ?? address);
+
+  return { lat: result.position.lat, lon: result.position.lon, formattedAddress };
 }
 
 export async function getRoute(

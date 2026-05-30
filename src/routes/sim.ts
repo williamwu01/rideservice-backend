@@ -7,6 +7,7 @@ import {
   adminDeclineBooking,
   confirmProposedDriver,
   declineProposedDriver,
+  selectAndProposeDriver,
   startBooking,
   completeBooking,
 } from "../services/booking";
@@ -87,6 +88,19 @@ router.get("/whatsapp/state", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.post("/whatsapp/reset", async (req, res, next) => {
+  try {
+    const phone = (req.query.phone ?? req.body?.phone) as string;
+    if (!phone) {
+      res.status(400).json({ success: false, error: "Missing phone" });
+      return;
+    }
+    const jid = phone.includes("@") ? phone : `${phone.replace(/\D/g, "")}@c.us`;
+    await prisma.conversationState.deleteMany({ where: { phone: jid } });
+    res.json({ success: true, message: `Conversation state cleared for ${jid}` });
+  } catch (err) { next(err); }
+});
+
 // ─── Admin Controls ───────────────────────────────────────────────────────────
 
 router.post("/bookings/:id/admin-confirm", async (req, res) => {
@@ -104,6 +118,17 @@ router.post("/bookings/:id/admin-decline", async (req, res) => {
     await adminDeclineBooking(req.params.id);
     const responses = flushDevOutbox();
     res.json({ success: true, responses });
+  } catch (err: unknown) {
+    res.status(400).json({ success: false, error: err instanceof Error ? err.message : "Unknown error" });
+  }
+});
+
+// Re-trigger driver selection for a PENDING booking that has no proposed driver
+router.post("/bookings/:id/propose-driver", async (req, res) => {
+  try {
+    const found = await selectAndProposeDriver(req.params.id);
+    const responses = flushDevOutbox();
+    res.json({ success: true, driverFound: found, responses });
   } catch (err: unknown) {
     res.status(400).json({ success: false, error: err instanceof Error ? err.message : "Unknown error" });
   }
