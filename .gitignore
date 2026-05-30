@@ -2,7 +2,9 @@ node_modules
 # Keep environment variables out of version control
 .env
 
-/generated/prisma
+/generated/
+/src/generated/
+/dist/
 .wwebjs_cache/
 whatsapp-session/
 uploads/

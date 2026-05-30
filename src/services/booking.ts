@@ -55,6 +55,91 @@ export async function createBooking(data: CreateBookingInput) {
   return booking;
 }
 
+// ─── Web booking (Path A) ─────────────────────────────────────────────────────
+
+export async function findDriverForWebBooking(
+  passengers: number,
+  luggage: number,
+  scheduledPickupAt: Date | null,
+  pickup: string
+) {
+  const pickupTime = scheduledPickupAt ?? new Date();
+  const windowStart = new Date(pickupTime.getTime() - 2 * 60 * 60 * 1000);
+  const windowEnd = new Date(pickupTime.getTime() + 2 * 60 * 60 * 1000);
+
+  const candidates = await prisma.driver.findMany({
+    where: {
+      isOnline: true,
+      maxPassengers: { gte: passengers },
+      maxLuggage: { gte: luggage },
+    },
+    include: {
+      rideRequests: {
+        where: {
+          status: { in: ["MATCHED", "IN_PROGRESS", "PENDING"] },
+          scheduledPickupAt: { gte: windowStart, lte: windowEnd },
+        },
+      },
+    },
+  });
+
+  const available = candidates.filter((d) => d.rideRequests.length === 0);
+  if (available.length === 0) return null;
+
+  const coords = await geocodeAddress(pickup);
+  if (coords) {
+    const ranked = available
+      .filter((d) => d.latitude !== null && d.longitude !== null)
+      .map((d) => ({
+        driver: d,
+        dist: haversineKm(d.latitude!, d.longitude!, coords.lat, coords.lon),
+      }))
+      .sort((a, b) => a.dist - b.dist);
+    const best = ranked[0]?.driver ?? available[0];
+    return { id: best.id, firstName: best.firstName, lastName: best.lastName, carModel: best.carModel, carNameplate: best.carNameplate, photo: best.photo };
+  }
+
+  const best = available[0];
+  return { id: best.id, firstName: best.firstName, lastName: best.lastName, carModel: best.carModel, carNameplate: best.carNameplate, photo: best.photo };
+}
+
+export async function createWebBooking(data: {
+  phone: string;
+  firstName: string;
+  lastName: string;
+  pickup: string;
+  destination: string;
+  passengers: number;
+  luggage: number;
+  scheduledPickupAt: Date | null;
+  pickupTime?: string;
+  estimatedFare?: number;
+  distanceKm?: number;
+  durationMin?: number;
+  specialRequests?: string;
+  driverId: string;
+}) {
+  return prisma.rideRequest.create({
+    data: {
+      phone: data.phone,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      pickup: data.pickup,
+      destination: data.destination,
+      pickupTime: data.pickupTime,
+      passengers: data.passengers,
+      luggage: data.luggage,
+      scheduledPickupAt: data.scheduledPickupAt,
+      estimatedFare: data.estimatedFare,
+      distanceKm: data.distanceKm,
+      durationMin: data.durationMin !== undefined ? Math.round(data.durationMin) : undefined,
+      status: "MATCHED",
+      paymentStatus: "PENDING",
+      driverId: data.driverId,
+    },
+  });
+}
+
 // ─── Admin notification ───────────────────────────────────────────────────────
 
 async function notifyAdmin(booking: {

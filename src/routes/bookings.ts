@@ -6,6 +6,7 @@ const router = express.Router();
 
 // Customer — open (triggered from the frontend booking widget)
 router.post("/book-ride", bookingController.bookRide);
+router.post("/book-ride-web", bookingController.bookRideWeb);
 
 // Admin only
 router.get("/bookings", requireApiKey, bookingController.getBookings);
