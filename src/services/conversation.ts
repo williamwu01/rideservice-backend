@@ -3,14 +3,30 @@ import { sendTextMessage } from "./whatsapp";
 import { confirmProposedDriver, declineProposedDriver, startBooking, completeBooking } from "./booking";
 import { parsePickupTime, formatScheduledTime } from "./timeparse";
 import { calculateEstimate } from "./estimate";
+import { geocode } from "./tomtom";
 
 const MESSAGES = {
   GREETING:
     "Hi! Welcome to Loop Rideshare\n\nI'll need a few details to book your ride. What's your full name?",
   ASK_PICKUP: (name: string) =>
     `Nice to meet you, ${name}!\n\nWhat's your pickup address?`,
+  CONFIRM_PICKUP: (address: string) =>
+    `Got it! Just to confirm, your pickup address is:\n\n📍 ${address}\n\nReply *1* to confirm or *2* to enter a different address.`,
   ASK_DESTINATION:
-    "Got it! Where would you like to go?",
+    "Great! Where would you like to go? (destination address)",
+  CONFIRM_DESTINATION: (address: string) =>
+    `And your destination is:\n\n📍 ${address}\n\nReply *1* to confirm or *2* to enter a different address.`,
+  SHOW_ESTIMATE: (pickup: string, destination: string, fare: number, distanceKm: number, durationMin: number) =>
+    `Here's your estimated fare:\n\n` +
+    `📍 From: ${pickup}\n` +
+    `🏁 To: ${destination}\n` +
+    `📏 Distance: ${distanceKm.toFixed(1)} km\n` +
+    `⏱ Duration: ~${durationMin} min\n` +
+    `💰 Estimated Fare: $${fare.toFixed(2)}\n\n` +
+    `When would you like to be picked up?\n\n(e.g. ASAP, Today 3:00 PM, Tomorrow 9:00 AM)`,
+  SHOW_ESTIMATE_UNAVAILABLE: (pickup: string, destination: string) =>
+    `Addresses confirmed!\n\n📍 From: ${pickup}\n🏁 To: ${destination}\n\n` +
+    `When would you like to be picked up?\n\n(e.g. ASAP, Today 3:00 PM, Tomorrow 9:00 AM)`,
   ASK_PICKUP_TIME:
     "When would you like to be picked up?\n\n(e.g. ASAP, Today 3:00 PM, Tomorrow 9:00 AM)",
   ASK_PASSENGERS:
@@ -28,6 +44,8 @@ const MESSAGES = {
     `Your request is being reviewed. We'll update you shortly!`,
   INVALID_NUMBER: (field: string) =>
     `Please enter a valid number for ${field}.`,
+  INVALID_ADDRESS_REPLY:
+    "Please reply *1* to confirm the address or *2* to enter a different one.",
   ALREADY_STARTED:
     "You already have an active request. Reply to continue where you left off.",
   DRIVER_CONFIRMED:
@@ -221,20 +239,84 @@ export async function handleIncomingMessage(phone: string, text: string) {
       }
 
       case "AWAITING_PICKUP": {
+        let resolvedPickup = trimmed;
+        try {
+          const geo = await geocode(trimmed);
+          resolvedPickup = geo.formattedAddress;
+        } catch {
+          // If geocoding fails, fall back to what the user typed and let them confirm
+        }
         await prisma.conversationState.update({
           where: { phone },
-          data: { pickup: trimmed, step: "AWAITING_DESTINATION" },
+          data: { pickup: resolvedPickup, step: "CONFIRMING_PICKUP" },
         });
-        await sendTextMessage(phone, MESSAGES.ASK_DESTINATION);
+        await sendTextMessage(phone, MESSAGES.CONFIRM_PICKUP(resolvedPickup));
+        break;
+      }
+
+      case "CONFIRMING_PICKUP": {
+        if (trimmed === "1") {
+          await prisma.conversationState.update({
+            where: { phone },
+            data: { step: "AWAITING_DESTINATION" },
+          });
+          await sendTextMessage(phone, MESSAGES.ASK_DESTINATION);
+        } else if (trimmed === "2") {
+          await prisma.conversationState.update({
+            where: { phone },
+            data: { pickup: null, step: "AWAITING_PICKUP" },
+          });
+          await sendTextMessage(phone, "No problem! Please enter your pickup address again.");
+        } else {
+          await sendTextMessage(phone, MESSAGES.INVALID_ADDRESS_REPLY);
+        }
         break;
       }
 
       case "AWAITING_DESTINATION": {
+        let resolvedDestination = trimmed;
+        try {
+          const geo = await geocode(trimmed);
+          resolvedDestination = geo.formattedAddress;
+        } catch {
+          // If geocoding fails, fall back to what the user typed and let them confirm
+        }
         await prisma.conversationState.update({
           where: { phone },
-          data: { destination: trimmed, step: "AWAITING_PICKUP_TIME" },
+          data: { destination: resolvedDestination, step: "CONFIRMING_DESTINATION" },
         });
-        await sendTextMessage(phone, MESSAGES.ASK_PICKUP_TIME);
+        await sendTextMessage(phone, MESSAGES.CONFIRM_DESTINATION(resolvedDestination));
+        break;
+      }
+
+      case "CONFIRMING_DESTINATION": {
+        if (trimmed === "1") {
+          const updated = await prisma.conversationState.update({
+            where: { phone },
+            data: { step: "AWAITING_PICKUP_TIME" },
+          });
+          // Show price estimate before asking pickup time
+          try {
+            const estimate = await calculateEstimate(updated.pickup!, updated.destination!);
+            await sendTextMessage(phone, MESSAGES.SHOW_ESTIMATE(
+              updated.pickup!,
+              updated.destination!,
+              estimate.fare,
+              estimate.distanceKm,
+              estimate.durationMin,
+            ));
+          } catch {
+            await sendTextMessage(phone, MESSAGES.SHOW_ESTIMATE_UNAVAILABLE(updated.pickup!, updated.destination!));
+          }
+        } else if (trimmed === "2") {
+          await prisma.conversationState.update({
+            where: { phone },
+            data: { destination: null, step: "AWAITING_DESTINATION" },
+          });
+          await sendTextMessage(phone, "No problem! Please enter your destination address again.");
+        } else {
+          await sendTextMessage(phone, MESSAGES.INVALID_ADDRESS_REPLY);
+        }
         break;
       }
 

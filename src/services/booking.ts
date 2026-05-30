@@ -170,7 +170,7 @@ export async function selectAndProposeDriver(bookingId: string): Promise<boolean
       isOnline: true,
       ...(booking.passengers !== null && { maxPassengers: { gte: booking.passengers } }),
       ...(booking.luggage !== null && { maxLuggage: { gte: booking.luggage } }),
-      id: { notIn: booking.triedDriverIds.length > 0 ? booking.triedDriverIds : [""] },
+      id: { notIn: (booking.triedDriverIds ?? []).length > 0 ? booking.triedDriverIds : [""] },
     },
   });
 
@@ -279,26 +279,6 @@ export async function confirmProposedDriver(bookingId: string) {
     }
   }
 
-  // Notify driver with full job details
-  const customerDigits = booking.phone.replace(/@.*/, "").replace(/\D/g, "");
-  const customerLink = `https://wa.me/${customerDigits}`;
-
-  const timeLabel = booking.scheduledPickupAt
-    ? formatScheduledTime(booking.scheduledPickupAt)
-    : (booking.pickupTime ?? "ASAP");
-
-  await sendTextMessage(
-    driver.phone,
-    `You have been assigned a ride!\n\n` +
-    `Customer: ${booking.firstName} ${booking.lastName}\n` +
-    `Pickup: ${booking.pickup}\n` +
-    `Destination: ${booking.destination}\n` +
-    `Pickup Time: ${timeLabel}\n` +
-    `Passengers: ${booking.passengers}\n` +
-    `Luggage: ${booking.luggage}\n` +
-    `Contact: ${customerLink}\n\n` +
-    `Reply START ${bookingId} when you've picked up the customer.`
-  );
 }
 
 // ─── Customer declines proposed driver — try next ─────────────────────────────
