@@ -202,7 +202,9 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
       await redeemPromoCode(booking.promoCode);
     }
 
-    await notifyDriverOnPayment(booking.id);
+    notifyDriverOnPayment(booking.id).catch((err) =>
+      console.error("[capturePayment] driver notification failed:", err)
+    );
 
     res.json({
       success: true,

@@ -1,11 +1,21 @@
 import { config } from "../config/env";
 
+const PAYPAL_TIMEOUT_MS = 15_000;
+
+function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PAYPAL_TIMEOUT_MS);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() =>
+    clearTimeout(timer)
+  );
+}
+
 async function getAccessToken(): Promise<string> {
   const credentials = Buffer.from(
     `${config.paypal.clientId}:${config.paypal.clientSecret}`
   ).toString("base64");
 
-  const res = await fetch(`${config.paypal.baseUrl}/v1/oauth2/token`, {
+  const res = await fetchWithTimeout(`${config.paypal.baseUrl}/v1/oauth2/token`, {
     method: "POST",
     headers: {
       Authorization: `Basic ${credentials}`,
@@ -25,7 +35,7 @@ async function getAccessToken(): Promise<string> {
 export async function createOrder(amount: number, bookingId: string, returnUrl?: string, cancelUrl?: string) {
   const token = await getAccessToken();
 
-  const res = await fetch(`${config.paypal.baseUrl}/v2/checkout/orders`, {
+  const res = await fetchWithTimeout(`${config.paypal.baseUrl}/v2/checkout/orders`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -71,7 +81,7 @@ export async function createOrder(amount: number, bookingId: string, returnUrl?:
 export async function captureOrder(orderId: string) {
   const token = await getAccessToken();
 
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${config.paypal.baseUrl}/v2/checkout/orders/${orderId}/capture`,
     {
       method: "POST",
