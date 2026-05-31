@@ -153,7 +153,7 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
     if (config.simulatorMode || orderId.startsWith("SIM_")) {
       await prisma.rideRequest.update({
         where: { id: booking.id },
-        data: { paymentStatus: "PAID" },
+        data: { paymentStatus: "PAID", status: "MATCHED" },
       });
       if (booking.promoCode) {
         await redeemPromoCode(booking.promoCode);
@@ -181,7 +181,10 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
 
     await prisma.rideRequest.update({
       where: { id: booking.id },
-      data: { paymentStatus: "PAID" },
+      data: {
+        paymentStatus: "PAID",
+        status: "MATCHED",
+      },
     });
 
     if (booking.promoCode) {

@@ -63,6 +63,19 @@ export async function findDriverForWebBooking(
   scheduledPickupAt: Date | null,
   pickup: string
 ) {
+  const RESERVATION_MS = 5 * 60 * 1000; // 5-minute hold
+
+  // Release expired PENDING web reservations
+  await prisma.rideRequest.updateMany({
+    where: {
+      status: "PENDING",
+      paymentStatus: "PENDING",
+      driverId: { not: null },
+      createdAt: { lt: new Date(Date.now() - RESERVATION_MS) },
+    },
+    data: { status: "CANCELLED" },
+  });
+
   const pickupTime = scheduledPickupAt ?? new Date();
   const windowStart = new Date(pickupTime.getTime() - 2 * 60 * 60 * 1000);
   const windowEnd = new Date(pickupTime.getTime() + 2 * 60 * 60 * 1000);
@@ -76,8 +89,10 @@ export async function findDriverForWebBooking(
     include: {
       rideRequests: {
         where: {
+          // Block on confirmed AND active pending reservations (within 5-min window)
           status: { in: ["MATCHED", "IN_PROGRESS", "PENDING"] },
           scheduledPickupAt: { gte: windowStart, lte: windowEnd },
+          createdAt: { gte: new Date(Date.now() - RESERVATION_MS) },
         },
       },
     },
@@ -133,10 +148,21 @@ export async function createWebBooking(data: {
       estimatedFare: data.estimatedFare,
       distanceKm: data.distanceKm,
       durationMin: data.durationMin !== undefined ? Math.round(data.durationMin) : undefined,
-      status: "MATCHED",
+      status: "PENDING",
       paymentStatus: "PENDING",
       driverId: data.driverId,
     },
+  });
+}
+
+export async function releaseWebReservation(bookingId: string) {
+  await prisma.rideRequest.updateMany({
+    where: {
+      id: bookingId,
+      status: "PENDING",
+      paymentStatus: "PENDING",
+    },
+    data: { status: "CANCELLED" },
   });
 }
 

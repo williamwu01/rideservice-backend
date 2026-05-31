@@ -90,6 +90,15 @@ export const bookRideWeb = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
+export const releaseWebReservation = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await bookingService.releaseWebReservation(req.params.id as string);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+};
+
 export const getBookings = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const status = req.query.status as string | undefined;
