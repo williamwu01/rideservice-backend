@@ -14,7 +14,10 @@ async function getAccessToken(): Promise<string> {
     body: "grant_type=client_credentials",
   });
 
-  if (!res.ok) throw new Error(`PayPal auth failed: ${res.status}`);
+  if (!res.ok) {
+    console.error(`[PayPal] auth failed ${res.status} — clientId starts with: "${config.paypal.clientId.slice(0, 8)}" baseUrl: "${config.paypal.baseUrl}"`);
+    throw new Error(`PayPal auth failed: ${res.status}`);
+  }
   const data = await res.json() as any;
   return data.access_token;
 }
