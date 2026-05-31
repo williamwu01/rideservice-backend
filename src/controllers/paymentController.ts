@@ -150,6 +150,17 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
       return;
     }
 
+    // Idempotency: already captured — return success immediately
+    if (booking.paymentStatus === "PAID") {
+      res.json({
+        success: true,
+        message: "Payment already captured",
+        bookingId: booking.id,
+        amountCharged: booking.finalFare ?? booking.estimatedFare ?? 0,
+      });
+      return;
+    }
+
     if (config.simulatorMode || orderId.startsWith("SIM_")) {
       await prisma.rideRequest.update({
         where: { id: booking.id },
