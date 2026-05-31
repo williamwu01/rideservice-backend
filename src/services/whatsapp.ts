@@ -38,7 +38,8 @@ export async function startWhatsApp() {
       authStrategy: new LocalAuth({ dataPath: "whatsapp-session" }),
       puppeteer: {
         headless: true,
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
       },
     });
 
