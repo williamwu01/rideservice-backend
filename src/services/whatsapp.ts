@@ -155,17 +155,9 @@ export async function sendTextMessage(phone: string, text: string) {
   if (phone.includes("@")) {
     jid = phone;
   } else {
-    const digits = phone.replace(/\D/g, "");
-    try {
-      const numberId = await client.getNumberId(digits);
-      // getNumberId returns null for non-contacts in some WA states — fall back to direct JID
-      jid = numberId ? numberId._serialized : `${digits}@c.us`;
-      if (!numberId) console.warn(`[sendTextMessage] getNumberId null for ${digits} — sending direct`);
-    } catch {
-      // getNumberId throws (e.g. createWid null) when contact not registered locally
-      jid = `${digits}@c.us`;
-      console.warn(`[sendTextMessage] getNumberId threw for ${digits} — sending direct`);
-    }
+    // Construct JID directly — getNumberId only works for saved contacts and its
+    // Puppeteer evaluation throws for non-contacts, destabilising the WA session
+    jid = `${phone.replace(/\D/g, "")}@c.us`;
   }
 
   await client.sendMessage(jid, text);
@@ -182,15 +174,7 @@ export async function sendImageMessage(phone: string, imagePath: string, caption
   if (phone.includes("@")) {
     jid = phone;
   } else {
-    const digits = phone.replace(/\D/g, "");
-    try {
-      const numberId = await client.getNumberId(digits);
-      jid = numberId ? numberId._serialized : `${digits}@c.us`;
-      if (!numberId) console.warn(`[sendImageMessage] getNumberId null for ${digits} — sending direct`);
-    } catch {
-      jid = `${digits}@c.us`;
-      console.warn(`[sendImageMessage] getNumberId threw for ${digits} — sending direct`);
-    }
+    jid = `${phone.replace(/\D/g, "")}@c.us`;
   }
 
   const media = MessageMedia.fromFilePath(imagePath);
