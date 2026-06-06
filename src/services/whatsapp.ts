@@ -125,6 +125,9 @@ export async function startWhatsApp() {
   } catch (error) {
     isStarting = false;
     console.error(`❌ WhatsApp init failed (attempt ${startAttempts}/${RETRY_DELAYS_MS.length}):`, error);
+    // Destroy before nullifying so the puppeteer browser process is killed and the
+    // next retry doesn't fail with "browser already running for this userDataDir"
+    await client?.destroy().catch(() => {});
     client = null;
     scheduleReconnect();
   }
@@ -153,12 +156,16 @@ export async function sendTextMessage(phone: string, text: string) {
     jid = phone;
   } else {
     const digits = phone.replace(/\D/g, "");
-    const numberId = await client.getNumberId(digits);
-    if (!numberId) {
-      console.error(`[sendTextMessage] ${digits} is not on WhatsApp — skipping`);
-      return;
+    try {
+      const numberId = await client.getNumberId(digits);
+      // getNumberId returns null for non-contacts in some WA states — fall back to direct JID
+      jid = numberId ? numberId._serialized : `${digits}@c.us`;
+      if (!numberId) console.warn(`[sendTextMessage] getNumberId null for ${digits} — sending direct`);
+    } catch {
+      // getNumberId throws (e.g. createWid null) when contact not registered locally
+      jid = `${digits}@c.us`;
+      console.warn(`[sendTextMessage] getNumberId threw for ${digits} — sending direct`);
     }
-    jid = numberId._serialized;
   }
 
   await client.sendMessage(jid, text);
@@ -176,12 +183,14 @@ export async function sendImageMessage(phone: string, imagePath: string, caption
     jid = phone;
   } else {
     const digits = phone.replace(/\D/g, "");
-    const numberId = await client.getNumberId(digits);
-    if (!numberId) {
-      console.error(`[sendImageMessage] ${digits} is not on WhatsApp — skipping`);
-      return;
+    try {
+      const numberId = await client.getNumberId(digits);
+      jid = numberId ? numberId._serialized : `${digits}@c.us`;
+      if (!numberId) console.warn(`[sendImageMessage] getNumberId null for ${digits} — sending direct`);
+    } catch {
+      jid = `${digits}@c.us`;
+      console.warn(`[sendImageMessage] getNumberId threw for ${digits} — sending direct`);
     }
-    jid = numberId._serialized;
   }
 
   const media = MessageMedia.fromFilePath(imagePath);
