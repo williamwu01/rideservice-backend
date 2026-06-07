@@ -33,6 +33,34 @@ router.post("/start", async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/sms/incoming
+// Webhook called by the SMS Gateway app when a customer replies
+router.post("/incoming", async (req: Request, res: Response) => {
+  // SMS Gateway sends: { message: "...", phoneNumber: "+17786689615", receivedAt: "..." }
+  const { message, phoneNumber } = req.body;
+
+  if (!message || !phoneNumber) {
+    res.status(400).json({ error: "message and phoneNumber are required" });
+    return;
+  }
+
+  // Normalize phone: strip non-digits, ensure country code
+  const normalized = phoneNumber.replace(/\D/g, "");
+  console.log(`[sms/incoming] from=${normalized} message="${message}"`);
+
+  try {
+    if (await isAdmin(normalized)) {
+      await handleAdminCommand(normalized, message);
+    } else {
+      await handleIncomingMessage(normalized, message);
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("[sms/incoming] Error:", err?.message, err?.stack);
+    res.status(500).json({ error: "Failed to handle incoming message" });
+  }
+});
+
 // POST /api/whatsapp/simulate
 // Dev-only: simulate an incoming WhatsApp message from any phone number.
 // Requires API key and is blocked entirely in production.
