@@ -144,27 +144,39 @@ function scheduleReconnect() {
 }
 
 export async function sendTextMessage(phone: string, text: string) {
-  if (simulationMode) {
+  if (!client || simulationMode) {
     const entry = { to: phone, body: text, sentAt: new Date().toISOString() };
     devOutbox.push(entry);
     console.log(`[sendTextMessage][sim] to=${phone}\n${text}\n`);
     return;
   }
 
-  // Use SMS Gateway as the outbound transport
-  const { sendSms } = await import("./sms");
-  await sendSms(phone, text);
+  let jid: string;
+  if (phone.includes("@")) {
+    jid = phone;
+  } else {
+    // Construct JID directly — getNumberId only works for saved contacts and its
+    // Puppeteer evaluation throws for non-contacts, destabilising the WA session
+    jid = `${phone.replace(/\D/g, "")}@c.us`;
+  }
+
+  await client.sendMessage(jid, text);
 }
 
 export async function sendImageMessage(phone: string, imagePath: string, caption: string) {
-  if (simulationMode) {
+  if (!client || simulationMode) {
     devOutbox.push({ to: phone, body: `[IMAGE] ${caption}`, sentAt: new Date().toISOString() });
     console.log(`[sendImageMessage][sim] to=${phone}\n${caption}\n`);
     return;
   }
 
-  // SMS doesn't support images — send caption as text instead
-  console.warn(`[sendImageMessage] Images not supported via SMS, sending caption only to ${phone}`);
-  const { sendSms } = await import("./sms");
-  await sendSms(phone, caption);
+  let jid: string;
+  if (phone.includes("@")) {
+    jid = phone;
+  } else {
+    jid = `${phone.replace(/\D/g, "")}@c.us`;
+  }
+
+  const media = MessageMedia.fromFilePath(imagePath);
+  await client.sendMessage(jid, media, { caption });
 }

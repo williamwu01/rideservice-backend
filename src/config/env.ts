@@ -24,11 +24,6 @@ export const config = {
     process.env.SCHEDULE_DISPATCH_WINDOW_MINUTES || "45",
     10
   ),
-  smsGateway: {
-    url: process.env.SMS_GATEWAY_URL || "",
-    user: process.env.SMS_GATEWAY_USER || "",
-    pass: process.env.SMS_GATEWAY_PASS || "",
-  },
 };
 
 export const validateConfig = () => {
