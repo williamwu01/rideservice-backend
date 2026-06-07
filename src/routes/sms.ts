@@ -16,11 +16,12 @@ router.post("/incoming", async (req: Request, res: Response) => {
     }
   }
 
-  // sms-gate.app webhook payload
-  const rawPhone: string = req.body.phoneNumber ?? req.body.from ?? "";
-  const message: string = req.body.message ?? req.body.body ?? "";
+  // Twilio webhook payload uses From and Body
+  const rawPhone: string = req.body.From ?? req.body.phoneNumber ?? "";
+  const message: string = req.body.Body ?? req.body.message ?? "";
 
   if (!rawPhone || !message) {
+    console.warn("[sms/incoming] missing fields, body was:", JSON.stringify(req.body));
     res.status(400).json({ error: "Missing phoneNumber or message" });
     return;
   }

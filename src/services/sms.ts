@@ -1,41 +1,30 @@
-import { config } from "../config/env";
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 
-/**
- * Sends an SMS via the Android SMS Gateway app (sms-gate.app).
- * API docs: https://sms-gate.app/api/
- */
 export async function sendSms(phone: string, message: string): Promise<void> {
-  const { url, user, pass } = config.smsGateway;
-
-  if (!url || !user || !pass) {
-    throw new Error("SMS Gateway not configured. Set SMS_GATEWAY_URL, SMS_GATEWAY_USER, SMS_GATEWAY_PASS in .env");
+  if (!accountSid || !authToken || !fromNumber) {
+    throw new Error("Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER in .env");
   }
 
-  // Normalize: strip non-digits, ensure country code
   const digits = phone.replace(/\D/g, "");
-  const e164 = digits.startsWith("1") ? `+${digits}` : `+1${digits}`;
+  const to = digits.startsWith("1") ? `+${digits}` : `+1${digits}`;
 
-  const body = JSON.stringify({
-    message,
-    phoneNumbers: [e164],
-    withDeliveryReport: true,
-  });
+  const credentials = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
 
-  const credentials = Buffer.from(`${user}:${pass}`).toString("base64");
-
-  const res = await fetch(`${url}/3rdparty/v1/messages`, {
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
       "Authorization": `Basic ${credentials}`,
     },
-    body,
+    body: new URLSearchParams({ To: to, From: fromNumber, Body: message }).toString(),
   });
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`SMS Gateway error ${res.status}: ${text}`);
+    throw new Error(`Twilio error ${res.status}: ${text}`);
   }
 
-  console.log(`[sms] ✅ Sent to ${e164}`);
+  console.log(`[sms] ✅ Sent to ${to}`);
 }
