@@ -3,13 +3,14 @@ import path from "path";
 import express from "express";
 import cors from "cors";
 import whatsappRoutes from "./routes/whatsapp";
+import smsRoutes from "./routes/sms";
 import bookingRoutes from "./routes/bookings";
 import driverRoutes from "./routes/drivers";
 import estimateRoutes from "./routes/estimate";
 import paymentRoutes from "./routes/payment";
 import placesRoutes from "./routes/places";
 import simRoutes from "./routes/sim";
-import { startWhatsApp, enableSimulationMode } from "./services/whatsapp";
+import { enableSimulationMode } from "./services/whatsapp";
 import { startScheduler } from "./services/scheduler";
 import { config, validateConfig } from "./config/env";
 import { errorHandler } from "./middleware/errorHandler";
@@ -35,6 +36,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/whatsapp", whatsappRoutes);
+app.use("/api/sms", smsRoutes);
 app.use("/api", bookingRoutes);
 app.use("/api", driverRoutes);
 app.use("/api", estimateRoutes);
@@ -48,10 +50,9 @@ app.use(errorHandler);
 const server = app.listen(PORT, () => {
   if (config.simulatorMode) {
     enableSimulationMode();
-    console.log(`✅ Server running on http://localhost:${PORT} (${config.nodeEnv}) [SIMULATOR MODE — WhatsApp & payments are mocked]`);
+    console.log(`✅ Server running on http://localhost:${PORT} (${config.nodeEnv}) [SIMULATOR MODE — SMS & payments are mocked]`);
   } else {
     console.log(`✅ Server running on http://localhost:${PORT} (${config.nodeEnv})`);
-    startWhatsApp();
   }
   startScheduler();
 });
