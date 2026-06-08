@@ -73,6 +73,45 @@ export async function handlePricingCommand(phone: string, parts: string[]) {
     return;
   }
 
+  // ADMIN PRICE CREATE <name>  — creates a new profile with default rates and activates it
+  if (sub === "create") {
+    const name = parts[3]?.toLowerCase();
+    if (!name) {
+      await sendTextMessage(phone, "❌ Usage: ADMIN PRICE CREATE <name>");
+      return;
+    }
+
+    const existing = await prisma.pricingConfig.findUnique({ where: { name } });
+    if (existing) {
+      await sendTextMessage(phone, `❌ Profile "${name}" already exists. Use ADMIN PRICE ACTIVATE ${name} to enable it.`);
+      return;
+    }
+
+    await prisma.pricingConfig.updateMany({ data: { isActive: false } });
+    const profile = await prisma.pricingConfig.create({
+      data: {
+        name,
+        baseFare: 2.75,
+        perKm: 1.50,
+        perMin: 0.36,
+        bookingFee: 2.00,
+        minimumFare: 8.00,
+        airportFee: 5.00,
+        lateNightFee: 3.00,
+        isActive: true,
+      },
+    });
+
+    await sendTextMessage(
+      phone,
+      `✅ Pricing profile *${profile.name}* created and activated!\n\n` +
+      `Base: $${profile.baseFare.toFixed(2)} | Per km: $${profile.perKm.toFixed(2)} | Per min: $${profile.perMin.toFixed(2)}\n` +
+      `Booking fee: $${profile.bookingFee.toFixed(2)} | Minimum: $${profile.minimumFare.toFixed(2)}\n\n` +
+      `Use ADMIN PRICE SET <field> <value> to adjust.`
+    );
+    return;
+  }
+
   // ADMIN PRICE ACTIVATE <name>
   if (sub === "activate") {
     const name = parts[3]?.toLowerCase();
@@ -118,6 +157,7 @@ export async function handlePricingCommand(phone: string, parts: string[]) {
   await sendTextMessage(
     phone,
     `💰 *Pricing Commands*\n\n` +
+    `ADMIN PRICE CREATE <name>\n` +
     `ADMIN PRICE SHOW\n` +
     `ADMIN PRICE LIST\n` +
     `ADMIN PRICE ACTIVATE <name>\n` +
@@ -125,6 +165,7 @@ export async function handlePricingCommand(phone: string, parts: string[]) {
     `ADMIN PRICE SET km 2.00\n` +
     `ADMIN PRICE SET min 0.45\n` +
     `ADMIN PRICE SET booking 3.00\n` +
+    `ADMIN PRICE SET minimum 10.00\n` +
     `ADMIN PRICE SET airport 7.00\n` +
     `ADMIN PRICE SET latenight 4.00`
   );

@@ -1,6 +1,7 @@
 import { geocode, getRoute } from "./tomtom";
+import { prisma } from "../lib/prisma";
 
-const RATES = {
+const DEFAULTS = {
   baseFare: 2.75,
   perKm: 1.50,
   perMin: 0.36,
@@ -9,6 +10,11 @@ const RATES = {
   airportFee: 5.00,
   lateNightFee: 3.00,
 };
+
+async function getRates() {
+  const config = await prisma.pricingConfig.findFirst({ where: { isActive: true } });
+  return config ?? DEFAULTS;
+}
 
 function isAirport(address: string): boolean {
   const lower = address.toLowerCase();
@@ -30,36 +36,36 @@ function round2(n: number) {
 }
 
 export async function calculateEstimate(pickup: string, destination: string) {
-  const [originCoords, destCoords] = await Promise.all([
-    geocode(pickup),
-    geocode(destination),
+  const [rates, [originCoords, destCoords]] = await Promise.all([
+    getRates(),
+    Promise.all([geocode(pickup), geocode(destination)]),
   ]);
 
   const { distanceKm, durationMin } = await getRoute(originCoords, destCoords);
 
-  const airportFee = isAirport(pickup) || isAirport(destination) ? RATES.airportFee : 0;
-  const lateNightFee = isLateNight() ? RATES.lateNightFee : 0;
+  const airportFee = isAirport(pickup) || isAirport(destination) ? rates.airportFee : 0;
+  const lateNightFee = isLateNight() ? rates.lateNightFee : 0;
 
-  const distanceCost = distanceKm * RATES.perKm;
-  const timeCost = durationMin * RATES.perMin;
+  const distanceCost = distanceKm * rates.perKm;
+  const timeCost = durationMin * rates.perMin;
 
   const subtotal =
-    RATES.baseFare +
-    RATES.bookingFee +
+    rates.baseFare +
+    rates.bookingFee +
     distanceCost +
     timeCost +
     airportFee +
     lateNightFee;
 
-  const fare = round2(Math.max(subtotal, RATES.minimumFare));
+  const fare = round2(Math.max(subtotal, rates.minimumFare));
 
   return {
     distanceKm: round2(distanceKm),
     durationMin,
     fare,
     breakdown: {
-      baseFare: RATES.baseFare,
-      bookingFee: RATES.bookingFee,
+      baseFare: rates.baseFare,
+      bookingFee: rates.bookingFee,
       distanceCost: round2(distanceCost),
       timeCost: round2(timeCost),
       airportFee,

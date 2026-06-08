@@ -226,10 +226,34 @@ export async function adminConfirmBooking(bookingId: string): Promise<{ schedule
     });
 
     const timeLabel = formatScheduledTime(booking.scheduledPickupAt!);
-    await sendTextMessage(
-      booking.phone,
-      `Your ride has been confirmed for ${timeLabel}!\n\nWe'll find you a driver shortly before your pickup time. You'll receive a notification when a driver is on the way.`
-    );
+
+    // Send payment link immediately to secure the booking
+    const fare = booking.finalFare ?? booking.estimatedFare;
+    if (fare) {
+      try {
+        const backendUrl = process.env.BACKEND_URL || "https://jsw4ogcg084gg04ww4g8ks8g.riteshmaharjan.com";
+        const order = await createOrder(fare, bookingId, `${backendUrl}/api/payment/success`, `${backendUrl}/api/payment/cancel`);
+        await prisma.rideRequest.update({
+          where: { id: bookingId },
+          data: { paypalOrderId: order.orderId, paymentStatus: "PENDING" },
+        });
+        await sendTextMessage(
+          booking.phone,
+          `Your ride is confirmed for ${timeLabel}!\n\nPlease complete payment to secure your booking:\n\n💳 Pay now: ${order.approveUrl}\n\nAmount: $${fare.toFixed(2)} CAD\n\nA driver will be assigned closer to your pickup time.`
+        );
+      } catch (err) {
+        console.error("[adminConfirmBooking] payment link failed:", err);
+        await sendTextMessage(
+          booking.phone,
+          `Your ride has been confirmed for ${timeLabel}!\n\nWe'll find you a driver shortly before your pickup time.`
+        );
+      }
+    } else {
+      await sendTextMessage(
+        booking.phone,
+        `Your ride has been confirmed for ${timeLabel}!\n\nWe'll find you a driver shortly before your pickup time.`
+      );
+    }
 
     return { scheduled: true, timeLabel };
   } else {
@@ -360,6 +384,15 @@ export async function confirmProposedDriver(bookingId: string) {
       proposedDriverId: null,
     },
   });
+
+  // If payment already collected (scheduled ride paid upfront), skip payment link
+  if (booking.paymentStatus === "PAID") {
+    await sendTextMessage(
+      booking.phone,
+      `Your driver is confirmed and on the way! Your payment has already been processed.`
+    );
+    return;
+  }
 
   // Send payment link to customer
   const fare = booking.finalFare ?? booking.estimatedFare;
