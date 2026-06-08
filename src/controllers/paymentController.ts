@@ -136,6 +136,58 @@ async function notifyDriverOnPayment(bookingId: string) {
   );
 }
 
+// GET /api/payment/success — PayPal redirects here after customer approves payment
+// Captures the order (actually charges the customer) and shows a confirmation page
+export const paymentSuccess = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const orderId = req.query.token as string;
+
+    if (!orderId) {
+      res.status(400).send("Missing payment token.");
+      return;
+    }
+
+    const booking = await prisma.rideRequest.findFirst({ where: { paypalOrderId: orderId } });
+    if (!booking) {
+      res.status(404).send("Booking not found.");
+      return;
+    }
+
+    if (booking.paymentStatus === "PAID") {
+      res.send(successHtml(booking.firstName));
+      return;
+    }
+
+    const capture = await captureOrder(orderId);
+
+    if (capture.status !== "COMPLETED") {
+      res.status(400).send("Payment was not completed. Please try again.");
+      return;
+    }
+
+    await prisma.rideRequest.update({
+      where: { id: booking.id },
+      data: { paymentStatus: "PAID", status: "MATCHED" },
+    });
+
+    if (booking.promoCode) {
+      await redeemPromoCode(booking.promoCode);
+    }
+
+    notifyDriverOnPayment(booking.id).catch((err) =>
+      console.error("[paymentSuccess] driver notification failed:", err)
+    );
+
+    res.send(successHtml(booking.firstName));
+  } catch (err) {
+    next(err);
+  }
+};
+
+function successHtml(name: string) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Payment Confirmed</title><style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f0fdf4}div{text-align:center;padding:2rem}h1{color:#16a34a;font-size:2rem;margin-bottom:.5rem}p{color:#555}</style></head><body><div><h1>✅ Payment Confirmed!</h1><p>Thank you, ${name}. Your ride is booked.</p><p>Your driver will be in touch shortly.</p></div></body></html>`;
+}
+
 // Step 2 — called after customer approves payment in PayPal UI
 export const capturePayment = async (req: Request, res: Response, next: NextFunction) => {
   try {

@@ -372,7 +372,13 @@ export async function confirmProposedDriver(bookingId: string) {
         orderId = `SIM_${Date.now()}`;
         approveUrl = `http://localhost:3000/book/success?token=${orderId}`;
       } else {
-        const order = await createOrder(fare, bookingId);
+        const backendUrl = process.env.BACKEND_URL || "https://jsw4ogcg084gg04ww4g8ks8g.riteshmaharjan.com";
+        const order = await createOrder(
+          fare,
+          bookingId,
+          `${backendUrl}/api/payment/success`,
+          `${backendUrl}/api/payment/cancel`
+        );
         orderId = order.orderId;
         approveUrl = order.approveUrl;
       }
