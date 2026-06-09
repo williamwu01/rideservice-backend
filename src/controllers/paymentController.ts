@@ -167,16 +167,22 @@ export const paymentSuccess = async (req: Request, res: Response, next: NextFunc
 
     await prisma.rideRequest.update({
       where: { id: booking.id },
-      data: { paymentStatus: "PAID", status: "MATCHED" },
+      data: {
+        paymentStatus: "PAID",
+        // Keep SCHEDULED so the dispatcher picks it up; only flip to MATCHED if a driver is already assigned
+        ...(booking.driverId ? { status: "MATCHED" } : {}),
+      },
     });
 
     if (booking.promoCode) {
       await redeemPromoCode(booking.promoCode);
     }
 
-    notifyDriverOnPayment(booking.id).catch((err) =>
-      console.error("[paymentSuccess] driver notification failed:", err)
-    );
+    if (booking.driverId) {
+      notifyDriverOnPayment(booking.id).catch((err) =>
+        console.error("[paymentSuccess] driver notification failed:", err)
+      );
+    }
 
     res.send(successHtml(booking.firstName));
   } catch (err) {
@@ -216,12 +222,17 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
     if (config.simulatorMode || orderId.startsWith("SIM_")) {
       await prisma.rideRequest.update({
         where: { id: booking.id },
-        data: { paymentStatus: "PAID", status: "MATCHED" },
+        data: {
+          paymentStatus: "PAID",
+          ...(booking.driverId ? { status: "MATCHED" } : {}),
+        },
       });
       if (booking.promoCode) {
         await redeemPromoCode(booking.promoCode);
       }
-      await notifyDriverOnPayment(booking.id);
+      if (booking.driverId) {
+        await notifyDriverOnPayment(booking.id);
+      }
       res.json({
         success: true,
         message: "Simulated payment captured",
@@ -246,7 +257,7 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
       where: { id: booking.id },
       data: {
         paymentStatus: "PAID",
-        status: "MATCHED",
+        ...(booking.driverId ? { status: "MATCHED" } : {}),
       },
     });
 
@@ -254,9 +265,11 @@ export const capturePayment = async (req: Request, res: Response, next: NextFunc
       await redeemPromoCode(booking.promoCode);
     }
 
-    notifyDriverOnPayment(booking.id).catch((err) =>
-      console.error("[capturePayment] driver notification failed:", err)
-    );
+    if (booking.driverId) {
+      notifyDriverOnPayment(booking.id).catch((err) =>
+        console.error("[capturePayment] driver notification failed:", err)
+      );
+    }
 
     res.json({
       success: true,

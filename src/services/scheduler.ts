@@ -47,9 +47,27 @@ async function cancelStaleBookings() {
     data: { status: "CANCELLED" },
   });
 
-  const total = webCancelled.count + waPendingCancelled.count + waAdminCancelled.count;
+  // Scheduled rides still unpaid once we're within the 60-min dispatch window — too late to pay
+  const dispatchDeadline = new Date(now + config.scheduleDispatchWindowMinutes * 60 * 1000);
+  const unpaidScheduled = await prisma.rideRequest.findMany({
+    where: {
+      status: "SCHEDULED",
+      paymentStatus: { not: "PAID" },
+      scheduledPickupAt: { lte: dispatchDeadline },
+    },
+  });
+
+  for (const ride of unpaidScheduled) {
+    await prisma.rideRequest.update({ where: { id: ride.id }, data: { status: "CANCELLED" } });
+    sendTextMessage(
+      ride.phone,
+      `Your scheduled ride for ${ride.pickup} → ${ride.destination} was cancelled because payment was not completed in time.`
+    ).catch(() => {});
+  }
+
+  const total = webCancelled.count + waPendingCancelled.count + waAdminCancelled.count + unpaidScheduled.length;
   if (total > 0) {
-    console.log(`[scheduler] cancelled stale bookings — web:${webCancelled.count} wa_pending:${waPendingCancelled.count} wa_admin:${waAdminCancelled.count}`);
+    console.log(`[scheduler] cancelled stale bookings — web:${webCancelled.count} wa_pending:${waPendingCancelled.count} wa_admin:${waAdminCancelled.count} unpaid_scheduled:${unpaidScheduled.length}`);
   }
 }
 
@@ -64,6 +82,7 @@ export async function processScheduledRides() {
   const upcoming = await prisma.rideRequest.findMany({
     where: {
       status: "SCHEDULED",
+      paymentStatus: "PAID",
       scheduledPickupAt: { lte: windowEnd },
     },
   });

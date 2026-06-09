@@ -391,6 +391,30 @@ export async function confirmProposedDriver(bookingId: string) {
       booking.phone,
       `Your driver is confirmed and on the way! Your payment has already been processed.`
     );
+
+    // Notify the driver with full job details
+    const updatedBooking = await prisma.rideRequest.findUnique({
+      where: { id: bookingId },
+      include: { driver: true },
+    });
+    if (updatedBooking?.driver) {
+      const customerDigits = booking.phone.replace(/@.*/, "").replace(/\D/g, "");
+      const timeLabel = updatedBooking.scheduledPickupAt
+        ? formatScheduledTime(updatedBooking.scheduledPickupAt)
+        : (updatedBooking.pickupTime ?? "ASAP");
+      await sendTextMessage(
+        updatedBooking.driver.phone,
+        `✅ You have been assigned a ride!\n\n` +
+        `Customer: ${updatedBooking.firstName} ${updatedBooking.lastName}\n` +
+        `Pickup: ${updatedBooking.pickup}\n` +
+        `Destination: ${updatedBooking.destination}\n` +
+        `Pickup Time: ${timeLabel}\n` +
+        `Passengers: ${updatedBooking.passengers}\n` +
+        `Luggage: ${updatedBooking.luggage}\n` +
+        `Contact: ${customerDigits}\n\n` +
+        `Reply START ${bookingId} when you've picked up the customer.`
+      ).catch((err) => console.error("[confirmProposedDriver] driver notification failed:", err));
+    }
     return;
   }
 

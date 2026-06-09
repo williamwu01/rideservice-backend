@@ -8,7 +8,7 @@ export async function sendSms(phone: string, message: string): Promise<void> {
   }
 
   const digits = phone.replace(/\D/g, "");
-  const to = digits.startsWith("1") ? `+${digits}` : `+1${digits}`;
+  const to = digits.length === 10 ? `+1${digits}` : `+${digits}`;
 
   const credentials = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
 
