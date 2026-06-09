@@ -198,8 +198,8 @@ async function notifyAdmin(booking: {
     `Pickup Time: ${timeLabel}\n` +
     `Passengers: ${booking.passengers}\n` +
     `Luggage: ${booking.luggage}\n\n` +
-    `Reply CONFIRM ${booking.id} to approve\n` +
-    `Reply DECLINE ${booking.id} to reject`;
+    `Reply CONFIRM ${booking.id.slice(-4)} to approve\n` +
+    `Reply DECLINE ${booking.id.slice(-4)} to reject`;
 
   await sendTextMessage(config.adminPhone, message);
 }
