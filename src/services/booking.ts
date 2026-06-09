@@ -322,7 +322,7 @@ export async function selectAndProposeDriver(bookingId: string): Promise<boolean
     for (const admin of admins) {
       sendTextMessage(
         admin.phone,
-        `⚠️ No available drivers for booking ${bookingId} (${booking.firstName} ${booking.lastName}). Please assign a driver manually.\nReply: ASSIGN ${bookingId} <driverId>`
+        `⚠️ No available drivers for booking ${bookingId.slice(-4).toUpperCase()} (${booking.firstName} ${booking.lastName}). Please assign a driver manually.\nReply: ASSIGN ${bookingId.slice(-4).toUpperCase()} <driverId>`
       ).catch(() => {});
     }
 
@@ -412,7 +412,7 @@ export async function confirmProposedDriver(bookingId: string) {
         `Passengers: ${updatedBooking.passengers}\n` +
         `Luggage: ${updatedBooking.luggage}\n` +
         `Contact: ${customerDigits}\n\n` +
-        `Reply START ${bookingId} when you've picked up the customer.`
+        `Reply START ${bookingId.slice(-4).toUpperCase()} when you've picked up the customer.`
       ).catch((err) => console.error("[confirmProposedDriver] driver notification failed:", err));
     }
     return;

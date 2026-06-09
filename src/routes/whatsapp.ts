@@ -10,7 +10,7 @@ const router = Router();
 // POST /api/whatsapp/start
 // Called by the frontend when user submits their phone number
 router.post("/start", async (req: Request, res: Response) => {
-  const { phone } = req.body;
+  const { phone, simulate } = req.body;
 
   if (!phone) {
     res.status(400).json({ error: "Phone number is required" });
@@ -22,12 +22,19 @@ router.post("/start", async (req: Request, res: Response) => {
   const normalized = digits.length === 10 ? `1${digits}` : digits;
   console.log(`[whatsapp/start] raw="${phone}" normalized="${normalized}"`);
 
+  const isSim = simulate === true || process.env.NODE_ENV !== "production";
+
   try {
+    if (isSim) enableSimulationMode();
     const result = await startConversation(normalized, true);
+    if (isSim) disableSimulationMode();
+
+    const botReplies = isSim ? flushDevOutbox() : [];
     const state = await prisma.conversationState.findUnique({ where: { phone: normalized } });
 
-    res.json({ success: true, ...result, state });
+    res.json({ success: true, ...result, state, botReplies });
   } catch (err: any) {
+    disableSimulationMode();
     console.error("[whatsapp/start] Error:", err?.message, err?.stack);
     res.status(500).json({ error: "Failed to start conversation" });
   }
@@ -77,12 +84,15 @@ router.post("/simulate", requireApiKey, async (req: Request, res: Response) => {
   }
 
   try {
+    enableSimulationMode();
+
     if (await isAdmin(phone)) {
       await handleAdminCommand(phone, message);
     } else {
       await handleIncomingMessage(phone, message);
     }
 
+    disableSimulationMode();
     const botReplies = flushDevOutbox();
     const state = await prisma.conversationState.findUnique({ where: { phone } });
     const latestBooking = await prisma.rideRequest.findFirst({

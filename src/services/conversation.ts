@@ -92,22 +92,35 @@ async function handleDriverMessage(driverPhone: string, driverId: string, text: 
   if (!bookingId) {
     await sendTextMessage(
       driverPhone,
-      `Commands:\nONLINE — go online\nOFFLINE — go offline\nSTART <bookingId> — picked up customer\nCOMPLETE <bookingId> — dropped off customer`
+      `Commands:\nONLINE — go online\nOFFLINE — go offline\nSTART <4-digit code> — picked up customer\nCOMPLETE <4-digit code> — dropped off customer`
     );
     return;
   }
 
+  // Resolve 4-digit short code to full booking ID
+  const booking = await prisma.rideRequest.findFirst({
+    where: { id: { endsWith: bookingId.toLowerCase() } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (!booking) {
+    await sendTextMessage(driverPhone, `❌ No booking found with code ${bookingId.toUpperCase()}`);
+    return;
+  }
+
+  const shortCode = booking.id.slice(-4).toUpperCase();
+
   try {
     if (command === "START") {
-      await startBooking(bookingId);
-      await sendTextMessage(driverPhone, `Ride started! Reply COMPLETE ${bookingId} when you've dropped off the customer.`);
+      await startBooking(booking.id);
+      await sendTextMessage(driverPhone, `Ride started! Reply COMPLETE ${shortCode} when you've dropped off the customer.`);
     } else if (command === "COMPLETE") {
-      await completeBooking(bookingId);
+      await completeBooking(booking.id);
       await sendTextMessage(driverPhone, `Ride completed! Great job.`);
     } else {
       await sendTextMessage(
         driverPhone,
-        `Unknown command.\nONLINE | OFFLINE | START <bookingId> | COMPLETE <bookingId>`
+        `Unknown command.\nONLINE | OFFLINE | START <4-digit code> | COMPLETE <4-digit code>`
       );
     }
   } catch (err: unknown) {
@@ -402,8 +415,8 @@ export async function handleIncomingMessage(phone: string, text: string) {
           `Pickup Time: ${timeLabel}\n` +
           `Passengers: ${updated.passengers ?? 1}\n` +
           `Luggage: ${luggageCount}\n\n` +
-          `Reply CONFIRM ${booking.id} to approve\n` +
-          `Reply DECLINE ${booking.id} to reject`;
+          `Reply CONFIRM ${booking.id.slice(-4).toUpperCase()} to approve\n` +
+          `Reply DECLINE ${booking.id.slice(-4).toUpperCase()} to reject`;
 
         for (const admin of admins) {
           sendTextMessage(admin.phone, adminMsg).catch((err) =>

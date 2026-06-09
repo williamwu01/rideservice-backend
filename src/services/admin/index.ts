@@ -40,8 +40,8 @@ export async function handleAdminCommand(phone: string, text: string) {
     phone,
     `*Admin Commands*\n\n` +
     `*Bookings:*\n` +
-    `CONFIRM <bookingId>\n` +
-    `DECLINE <bookingId>\n\n` +
+    `CONFIRM <4-digit code>\n` +
+    `DECLINE <4-digit code>\n\n` +
     `*Pricing:*\n` +
     `ADMIN PRICE SHOW\n` +
     `ADMIN PRICE LIST\n` +
