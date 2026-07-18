@@ -4,6 +4,7 @@ import { flushDevOutbox, enableSimulationMode, disableSimulationMode } from "../
 import { isAdmin, handleAdminCommand } from "../services/admin/index";
 import { requireApiKey } from "../middleware/apiKey";
 import { prisma } from "../lib/prisma";
+import { config } from "../config/env";
 
 const router = Router();
 
@@ -22,7 +23,10 @@ router.post("/start", async (req: Request, res: Response) => {
   const normalized = digits.length === 10 ? `1${digits}` : digits;
   console.log(`[whatsapp/start] raw="${phone}" normalized="${normalized}"`);
 
-  const isSim = simulate === true || process.env.NODE_ENV !== "production";
+  // Simulate only when the global simulator is on, or when the request explicitly
+  // asks for it outside production. Real sends must be the default — a missing
+  // NODE_ENV must never silently disable SMS.
+  const isSim = config.simulatorMode || (simulate === true && process.env.NODE_ENV !== "production");
 
   try {
     if (isSim) enableSimulationMode();
