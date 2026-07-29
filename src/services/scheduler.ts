@@ -6,7 +6,7 @@ import { sendTextMessage } from "./whatsapp";
 const WEB_RESERVATION_MS   = 5  * 60 * 1000; // Path A: 5 min
 const WA_PENDING_MS        = 30 * 60 * 1000; // Path B PENDING: 30 min
 const WA_AWAITING_ADMIN_MS = 24 * 60 * 60 * 1000; // Path B AWAITING_ADMIN: 24 hr
-
+const STALE_CONVOS_MS      = 24 * 60 * 60 * 1000; // Conversation inactivity: 24 hr will remvoe supabase awaiting //TODO: come back to adding this 
 /**
  * Cancel stale bookings for both paths.
  * Web bookings (phone has no @) expire after 5 min of PENDING.
@@ -14,6 +14,20 @@ const WA_AWAITING_ADMIN_MS = 24 * 60 * 60 * 1000; // Path B AWAITING_ADMIN: 24 h
  */
 async function cancelStaleBookings() {
   const now = Date.now();
+
+  // cancelling staled convos 
+  await prisma.conversationState.updateMany({
+    where:{
+      step:{
+        in: ["AWAITING_NAME", "AWAITING_PICKUP_TIME", "AWAITING_DESTINATION" , "AWAITING_PASSENGERS" , "AWAITING_LUGGAGE" ]
+      },
+      updatedAt: { lt: new Date(now - STALE_CONVOS_MS)},
+    },
+    data: { 
+      status: "COMPLETE",
+      pendingBookingId: null,
+    }
+  })
 
   // Path A — web reservations not paid within 5 min
   const webCancelled = await prisma.rideRequest.updateMany({
